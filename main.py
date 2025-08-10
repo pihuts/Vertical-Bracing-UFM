@@ -49,7 +49,8 @@ try:
     # End Plate for Column Connection
     end_plate_column = Plate(
         t=1 * si.inch,
-        material=MATERIALS["a572_gr50"]
+        material=MATERIALS["a572_gr50"],
+        width=10 * si.inch,
     )
 
     # Gusset Plate for Bracing Connection
@@ -76,7 +77,7 @@ try:
 
     column_endplate_connection = ConnectionFactory.create_bolted_connection(
         component=ConnectionComponent.FLANGE,
-        row_spacing=3.0 * si.inch,
+        row_spacing=5.5 * si.inch,
         column_spacing=3.0 * si.inch,
         n_rows=7,
         n_columns=2,
@@ -85,9 +86,19 @@ try:
         bolt_diameter=7/8 * si.inch,
         bolt_grade=BOLT_GRADES["a325_x"],
         material=MATERIALS["a572_gr50"],
-        angle=47.2 * math.pi / 180
     )
-
+    endpl_gusset_bolted_connection = ConnectionFactory.create_bolted_connection(
+        component=ConnectionComponent.FLANGE,
+        row_spacing=3.0 * si.inch,
+        column_spacing=3.0 * si.inch,
+        n_rows=2,
+        n_columns=7,
+        edge_distance_vertical=3 * si.inch,
+        edge_distance_horizontal=1.5 * si.inch,
+        bolt_diameter=7/8 * si.inch,
+        bolt_grade=BOLT_GRADES["a325_x"],
+        material=MATERIALS["a572_gr50"],
+    )
     # --- Define Initial Design Loads (from Design Guide Example 5.1) ---
     initial_loads = DesignLoads(
         Pu=840 * si.kip,
@@ -194,16 +205,18 @@ try:
     )
     print(f"   DCR (per bolt) = {dcr_bolt_shear:.2f} {'(OK)' if dcr_bolt_shear <= 1.0 else '(FAIL)'}")
 
-    # h) Gusset-to-Column Interface: Prying Action
-    print("\nCHECK: Gusset-to-Column Prying Action...")
-    prying_checker = PryingActionCalculator(end_plate_column, column_endplate_connection)
-    # Check against the normal force component on the column interface
-    tension_per_bolt = applied_loads.gusset_to_column_normal / (column_endplate_connection.configuration.n_rows * column_endplate_connection.configuration.n_columns)
-    dcr_prying = prying_checker.check_dcr(required_tension_per_bolt=tension_per_bolt, debug=True)
-    print(f"   DCR (per bolt) = {dcr_prying:.2f} {'(OK)' if dcr_prying <= 1.0 else '(FAIL)'}")
+    # # h) Gusset-to-Column Interface: Prying Action
+    # print("\nCHECK: Gusset-to-Column Prying Action...")
+    # prying_checker = PryingActionCalculator(end_plate_column, column_endplate_connection)
+    # # Check against the normal force component on the column interface
+    # tension_per_bolt = applied_loads.gusset_to_column_normal / (column_endplate_connection.configuration.n_rows * column_endplate_connection.configuration.n_columns)
+    # dcr_prying = prying_checker.check_dcr(required_tension_per_bolt=tension_per_bolt, debug=True)
+    # print(f"   DCR (per bolt) = {dcr_prying:.2f} {'(OK)' if dcr_prying <= 1.0 else '(FAIL)'}")
+    print("\n--- All DCR Checks Completed ---")
+    asdd = PryingActionCalculator(end_plate_column, gusset_plate_bracing,column_endplate_connection)
+    asdsad = asdd.check_dcr( debug=True)
 
-
-    print("\n\nScript finished successfully.")
+    # print("\n\nScript finished successfully.")
 
 except Exception as e:
     print("\n--- SCRIPT FAILED WITH AN ERROR ---")

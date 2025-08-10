@@ -10,6 +10,7 @@ from .data_models import (
     WeldConfiguration,
     Connection,
     ConnectionComponent,
+    AppliedLoads
 )
 from .debugging import DebugLogger
 
@@ -251,10 +252,11 @@ class BoltShearCalculator:
         # The result cannot be greater than the nominal tensile stress Fnt
         final_fnt_modified = min(modified_fnt_nominal, fnt)
         logger.add_output("Final Modified Tensile Stress (F'nt)", final_fnt_modified)
+        final_fnt_modified
         
         logger.display()
-        
-        return final_fnt_modified 
+        design_strength = resistance_factor * final_fnt_modified * self.bolt_area 
+        return design_strength 
 class TensileYieldingCalculator:
     """
     Calculates the tensile yielding capacity of a member.
@@ -1190,17 +1192,22 @@ class PryingActionCalculator:
     AISC Manual Part 9.
     """
 
-    def __init__(self, plate: Plate, connection: Connection):
+    def __init__(self, plate: Plate,gusset: Plate , connection: Connection):
         """
         Initializes the calculator with the plate and connection objects.
         """
         if connection.connection_type != "bolted":
             raise ValueError("PryingActionCalculator only supports bolted connections.")
-
+        self.connection = connection
         self.plate = plate
+        self.plate_width = plate.width
+        self.plate_length = plate.length
+        self.gusset = gusset
+        self.gusset_thickness = gusset.t
         self.config: BoltConfiguration = connection.configuration
         self.bolt_grade = self.config.bolt_grade
         self.bolt_diameter = self.config.bolt_diameter
+        self.t = self.plate.t  # Plate thickness
 
         # Geometric properties from the connection
         self.p = self.config.column_spacing  # Tributary length per bolt
@@ -1208,41 +1215,49 @@ class PryingActionCalculator:
         
         # Distances 'a' and 'b' as defined in AISC Manual Part 9
         # 'a' is the distance from the bolt centerline to the edge of the fitting
-        self.a = self.config.edge_distance_horizontal
+        self.a = (self.plate_width - self.g) / 2
         # 'b' is the distance from the bolt centerline to the face of the supporting element
-        self.b = self.config.edge_distance_vertical
+        self.b =  (self.g - self.gusset_thickness)/2
 
         # Derived geometric properties
         self.d_prime = self.bolt_diameter + (1 / 16) * si.inch # Effective hole diameter
         self.b_prime = self.b - self.bolt_diameter / 2
-        self.a_prime = self.a
-        if self.a < 1.25 * self.b:
-            self.a_prime = self.a + self.bolt_diameter / 2
-        
+        self.a_prime = min(self.a,1.25 * self.b) + self.bolt_diameter / 2
+
+        # Ratio of b' to a'
+        self.p_ = self.b_prime / self.a_prime
         # Delta: ratio of unstiffened to stiffened length
         self.delta = 1 - (self.d_prime / self.p)
         
         # Bolt properties
         self.bolt_area = (self.bolt_diameter**2 / 4) * math.pi
-        self.B = self.bolt_grade.Fnt * self.bolt_area # Nominal tensile strength of one bolt
 
-    def _calculate_alpha_prime(self, required_tension_per_bolt: si.kip) -> float:
+        # Get total number of bolts 
+        self.n_rows = self.config.n_rows
+        self.n_columns = self.config.n_columns
+        self.n_bolts = self.n_rows * self.n_columns
+
+        # This Values are hardcoded and will be updated later 
+        self.shear_force = 302 * si.kip
+        self.tension_force = 176 * si.kip
+
+    def _calculate_alpha_prime(self) -> float:
         """
         Calculates the intermediate variable alpha' (alpha_prime).
         """
         if self.B == 0:
             return float('inf')
-            
+        tc = self._calculate_t_req()  # Required thickness to eliminate prying action
         # Ratio of required tension to available strength
-        ratio = required_tension_per_bolt / self.B
+        ratio = tc / self.t
         
         if self.delta == 0:
             return float('inf')
 
-        alpha_prime = (1 / self.delta) * (ratio - 1)
+        alpha_prime = (1 /( self.delta*(1 + self.p_))) * (ratio**2 - 1)
         
         # alpha_prime cannot be greater than 1.0 or less than 0
-        return max(0, min(alpha_prime, 1.0))
+        return alpha_prime
 
     def _calculate_t_req(self) -> si.inch:
         """
@@ -1257,59 +1272,74 @@ class PryingActionCalculator:
         t_req = (numerator / denominator)**0.5
         return t_req
 
-    def _calculate_q(self, required_tension_per_bolt: si.kip) -> si.kip:
-        """
-        Calculates the prying force per bolt (Q).
-        """
-        t_req = self._calculate_t_req()
-        alpha_prime = self._calculate_alpha_prime(required_tension_per_bolt)
-        
-        if t_req == 0:
-            return float('inf') * si.kip
+    def calculate_Q(self) -> si.kip:
+        alpha_prime = self._calculate_alpha_prime()
+        tc = self._calculate_t_req()
+        if alpha_prime < 0 :
+            return 1
+        elif 0 <= alpha_prime <= 1:
+            return (self.t/ tc)**2 *(1 + (self.delta*alpha_prime))
+        elif alpha_prime > 1:
+            return (self.t/ tc)**2 *(1 + (self.delta))
 
-        # This term determines if prying occurs
-        prying_factor = (self.plate.t / t_req)**2 * self.delta * (1 + alpha_prime)
-        
-        Q = self.B * ((self.plate.t / t_req)**2 * self.delta * (1 + alpha_prime) - 1)
-        return max(0 * si.kip, Q)
-
-    def calculate_bolt_tension_with_prying(self, required_tension_per_bolt: si.kip) -> si.kip:
+    def calculate_bolt_tension_with_prying(self) -> si.kip:
         """
         Calculates the total tension in the bolt, including prying force.
         T_total = T_req + Q
         """
-        Q = self._calculate_q(required_tension_per_bolt)
-        return required_tension_per_bolt + Q
+        Fnt_modified = BoltShearCalculator(self.connection).calculate_capacity_fnt_modified(self.shear_force)
+        self.B = Fnt_modified * self.bolt_area # Nominal tensile strength of one bolt
+        Q = self.calculate_Q()
+        return self.B * Q
 
-    def check_dcr(self, required_tension_per_bolt: si.kip, resistance_factor: float = 0.75, debug: bool = False) -> float:
+    def check_dcr(self,resistance_factor: float = 0.75, debug: bool = False) -> float:
         """
         Calculates the DCR for prying action.
-        DCR = (T_req + Q) / (phi * B)
+        DCR = (T_req) / (phi * B * Q)
         """
-        total_demand = self.calculate_bolt_tension_with_prying(required_tension_per_bolt)
-        design_capacity = resistance_factor * self.B
+        available_strength = self.calculate_bolt_tension_with_prying()
+        design_capacity = resistance_factor * available_strength
         
         logger = DebugLogger("Prying Action", debug)
-        logger.add_input("Required Tension per Bolt (T_req)", required_tension_per_bolt)
+        logger.add_input("Required Tension per Bolt (T_req)", self.tension_force/( self.n_bolts))
+        logger.add_input("Plate Width (w)", self.plate.width)
         logger.add_input("Plate Thickness (t)", self.plate.t)
-        logger.add_input("Distance 'a'", self.a)
-        logger.add_input("Distance 'b'", self.b)
+        logger.add_input("Plate Fy", self.plate.Fy)
+        logger.add_input("Gusset Thickness", self.gusset_thickness)
+        logger.add_input("Bolt Diameter", self.bolt_diameter)
+        logger.add_input("Bolt Fnt", self.bolt_grade.Fnt)
         logger.add_input("Tributary Length (p)", self.p)
-        logger.add_input("Bolt Nominal Strength (B)", self.B)
+        logger.add_input("Gage (g)", self.g)
         logger.add_input("Resistance Factor (phi)", resistance_factor)
+        
+        logger.add_calculation("Distance 'a'", self.a)
+        logger.add_calculation("Distance 'b'", self.b)
+        logger.add_calculation("Effective Hole Diameter (d')", self.d_prime)
         logger.add_calculation("b'", self.b_prime)
         logger.add_calculation("a'", self.a_prime)
-        logger.add_calculation("delta", self.delta)
-        logger.add_calculation("alpha'", self._calculate_alpha_prime(required_tension_per_bolt))
-        logger.add_calculation("t_req", self._calculate_t_req())
-        logger.add_calculation("Prying Force (Q)", self._calculate_q(required_tension_per_bolt))
-        logger.add_calculation("Total Demand on Bolt (T_req + Q)", total_demand)
-        logger.add_output("Available Design Strength (phi*B)", design_capacity)
+        logger.add_calculation("rho (b'/a')", self.p_)
+        logger.add_calculation("delta (1 - d'/p)", self.delta)
+        logger.add_calculation("Bolt Area (Ab)", self.bolt_area)
+        logger.add_calculation("Bolt Nominal Strength (B)", self.B)
+
+        t_req = self._calculate_t_req()
+        logger.add_calculation("Required Thickness (t_req)", t_req)
+        
+        alpha_prime = self._calculate_alpha_prime()
+        logger.add_calculation("Alpha Prime (alpha')", alpha_prime)
+
+        Q = self.calculate_Q()
+        logger.add_calculation("Prying Force Factor (Q)", Q)
+        
+        logger.add_calculation("Available Bolt Strength with Prying (B*Q)", available_strength)
+        logger.add_output("Available Design Strength (phi*B*Q)", design_capacity)
+        
         logger.display()
 
         if design_capacity == 0:
             return float('inf')
             
-        return total_demand / design_capacity
+        return self.tension_force/( self.n_bolts) / design_capacity
 
 
+3

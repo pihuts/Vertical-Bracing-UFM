@@ -1,4 +1,9 @@
 AISC DESIGN GUIDE 29 / VERTICAL BRACING CONNECTIONS—ANALYSIS AND DESIGN / 43
+
+# Development and Testing Protocol
+1.  **Isolate Testing:** When testing a feature, create temporary test files. Do not modify existing library files or shared code. All test-specific data, such as custom materials or configurations, must be defined within the test file itself to ensure tests are self-contained and do not have side effects.
+2.  **Propose, Don't Impose:** If a modification to existing code is deemed necessary, present the proposed change as a suggestion. Include a clear description of the change, the reasoning behind it, and a summary of its pros and cons. No changes shall be implemented without explicit user approval.
+
 Chapter 5
 Design Examples
 The design examples of this section are worked in a generally
