@@ -1129,6 +1129,162 @@ print(f"   DCR (per bolt) = {dcr_prying:.2f} {'(OK)' if dcr_prying <= 1.0 else '
 - **External Docs**: `prying.md`, AISC Steel Construction Manual
 
 ---
+### 📅 2025-08-10 - 10:45 UTC - Entry #16
+
+#### 📋 Task Classification
+- **Type**: TEST
+- **Priority**: HIGH
+- **Requested By**: User
+- **Permission Status**: GRANTED
+
+#### 🎯 Approach & Decision Log
+- **Task**: Retest and debug the `calculate_capacity_fnt_modified` method after the user clarified that the `demand_force_shear` input should be the total interface shear, not the shear per bolt.
+- **Implementation Strategy**:
+    1.  **Correct the Calculator**: Modified the `calculate_capacity_fnt_modified` method in `steel_lib/calculations.py` to correctly calculate the shear force per bolt (`shear_per_bolt = demand_force_shear / self.no_bolts`) before determining the shear stress (`frv`).
+    2.  **Correct the Test**: Updated the `test_bolt_modified_tensile_strength` method in `tests/test_calculations.py` to pass the total interface shear (`302 kips`) as the `demand_force_shear`.
+    3.  **Debug Unit Mismatch**: The test failed due to a `forallpeople` unit mismatch. The assertion was corrected to compare the `Physical` objects directly (`self.assertAlmostEqual(fnt_modified, expected_fnt_modified, ...)`), which allows the testing framework to handle the units correctly.
+    4.  **Debug Precision Issues**: The test continued to fail due to minor rounding differences between the code's calculation and the value in the design guide.
+    5.  **Final Solution**: The assertion was updated to use a `delta` tolerance (`delta=0.1 * si.ksi`), making the test robust to insignificant precision variations. The test suite now passes.
+- **Files Modified**:
+    - `steel_lib/calculations.py`: Corrected the shear stress calculation.
+    - `tests/test_calculations.py`: Updated the test case to use the total interface force and a tolerance-based assertion.
+    - `docs/DEVELOPMENT_JOURNAL.md`: Added this entry.
+
+#### 🐛 Problems & Solutions
+- **Problem**: The unit test for `calculate_capacity_fnt_modified` was failing with multiple, evolving errors.
+- **Root Cause**: A cascading series of issues:
+    1.  The calculator was misinterpreting the `demand_force_shear` input (total force vs. per-bolt force).
+    2.  The test was incorrectly comparing the `.value` of `forallpeople` objects, leading to unit conversion errors.
+    3.  The final comparison was failing due to minor, acceptable rounding differences between the precise calculation and the published example.
+- **Solution**:
+    1.  The calculator logic was fixed to handle the total interface shear.
+    2.  The test was updated to pass the correct total shear value.
+    3.  The test assertion was corrected to compare the `Physical` objects directly, and a `delta` tolerance was added to account for rounding.
+- **Prevention**: When testing calculations involving unit-aware libraries, assertions should compare the objects themselves, not their raw `.value` attributes, to avoid base unit conversion problems. For comparisons against external sources, use a tolerance (`delta`) rather than a fixed precision (`places`).
+- **Time to Fix**: ~20 minutes.
+
+#### ✅ Solution Implemented
+```python
+# In steel_lib/calculations.py
+def calculate_capacity_fnt_modified(self, demand_force_shear: si.kip, ...):
+    # ...
+    shear_per_bolt = demand_force_shear / self.no_bolts
+    frv = shear_per_bolt / self.bolt_area
+    # ...
+
+# In tests/test_calculations.py
+def test_bolt_modified_tensile_strength(self):
+    # ...
+    total_demand_shear = 302 * si.kip
+    expected_fnt_modified = 53.6 * si.ksi
+
+    fnt_modified = shear_calculator.calculate_capacity_fnt_modified(
+        demand_force_shear=total_demand_shear,
+        ...
+    )
+
+    # Assert using a delta to account for rounding
+    self.assertAlmostEqual(fnt_modified, expected_fnt_modified, delta=0.1 * si.ksi)
+```
+
+#### 📊 Metrics & Impact
+- **Test Coverage**: Maintained. The test for `calculate_capacity_fnt_modified` is now more accurate and robust.
+- **Technical Debt**: Reduced. The logic in the calculator is now more intuitive, and the test is more reliable.
+
+#### 📝 Lessons Learned
+- Clearly defining the expected units and scope (e.g., total force vs. per-item force) of function parameters is critical.
+- Unit-aware libraries require careful handling in tests; comparing objects directly is usually safer than comparing their raw values.
+
+#### 🔄 Follow-up Actions
+- [x] All previous follow-up actions are now complete.
+- [ ] Continue adding unit tests for the remaining calculator classes.
+
+#### 🏷️ Tags
+`#testing` `#TDD` `#bugfix` `#problem-solved` `#units`
+
+#### 🔗 References
+- **Related Entries**: Entry #15
+- **External Docs**: `design_guide.md`
+
+---
+### 📅 2025-08-10 - 10:45 UTC - Entry #16
+
+#### 📋 Task Classification
+- **Type**: TEST
+- **Priority**: HIGH
+- **Requested By**: User
+- **Permission Status**: GRANTED
+
+#### 🎯 Approach & Decision Log
+- **Task**: Retest and debug the `calculate_capacity_fnt_modified` method after the user clarified that the `demand_force_shear` input should be the total interface shear, not the shear per bolt.
+- **Implementation Strategy**:
+    1.  **Correct the Calculator**: Modified the `calculate_capacity_fnt_modified` method in `steel_lib/calculations.py` to correctly calculate the shear force per bolt (`shear_per_bolt = demand_force_shear / self.no_bolts`) before determining the shear stress (`frv`).
+    2.  **Correct the Test**: Updated the `test_bolt_modified_tensile_strength` method in `tests/test_calculations.py` to pass the total interface shear (`302 kips`) as the `demand_force_shear`.
+    3.  **Debug Unit Mismatch**: The test failed due to a `forallpeople` unit mismatch. The assertion was corrected to compare the `Physical` objects directly (`self.assertAlmostEqual(fnt_modified, expected_fnt_modified, ...)`), which allows the testing framework to handle the units correctly.
+    4.  **Debug Precision Issues**: The test continued to fail due to minor rounding differences between the code's calculation and the value in the design guide.
+    5.  **Final Solution**: The assertion was updated to use a `delta` tolerance (`delta=0.1 * si.ksi`), making the test robust to insignificant precision variations. The test suite now passes.
+- **Files Modified**:
+    - `steel_lib/calculations.py`: Corrected the shear stress calculation.
+    - `tests/test_calculations.py`: Updated the test case to use the total interface force and a tolerance-based assertion.
+    - `docs/DEVELOPMENT_JOURNAL.md`: Added this entry.
+
+#### 🐛 Problems & Solutions
+- **Problem**: The unit test for `calculate_capacity_fnt_modified` was failing with multiple, evolving errors.
+- **Root Cause**: A cascading series of issues:
+    1.  The calculator was misinterpreting the `demand_force_shear` input (total force vs. per-bolt force).
+    2.  The test was incorrectly comparing the `.value` of `forallpeople` objects, leading to unit conversion errors.
+    3.  The final comparison was failing due to minor, acceptable rounding differences between the precise calculation and the published example.
+- **Solution**:
+    1.  The calculator logic was fixed to handle the total interface shear.
+    2.  The test was updated to pass the correct total shear value.
+    3.  The test assertion was corrected to compare the `Physical` objects directly, and a `delta` tolerance was added to account for rounding.
+- **Prevention**: When testing calculations involving unit-aware libraries, assertions should compare the objects themselves, not their raw `.value` attributes, to avoid base unit conversion problems. For comparisons against external sources, use a tolerance (`delta`) rather than a fixed precision (`places`).
+- **Time to Fix**: ~20 minutes.
+
+#### ✅ Solution Implemented
+```python
+# In steel_lib/calculations.py
+def calculate_capacity_fnt_modified(self, demand_force_shear: si.kip, ...):
+    # ...
+    shear_per_bolt = demand_force_shear / self.no_bolts
+    frv = shear_per_bolt / self.bolt_area
+    # ...
+
+# In tests/test_calculations.py
+def test_bolt_modified_tensile_strength(self):
+    # ...
+    total_demand_shear = 302 * si.kip
+    expected_fnt_modified = 53.6 * si.ksi
+
+    fnt_modified = shear_calculator.calculate_capacity_fnt_modified(
+        demand_force_shear=total_demand_shear,
+        ...
+    )
+
+    # Assert using a delta to account for rounding
+    self.assertAlmostEqual(fnt_modified, expected_fnt_modified, delta=0.1 * si.ksi)
+```
+
+#### 📊 Metrics & Impact
+- **Test Coverage**: Maintained. The test for `calculate_capacity_fnt_modified` is now more accurate and robust.
+- **Technical Debt**: Reduced. The logic in the calculator is now more intuitive, and the test is more reliable.
+
+#### 📝 Lessons Learned
+- Clearly defining the expected units and scope (e.g., total force vs. per-item force) of function parameters is critical.
+- Unit-aware libraries require careful handling in tests; comparing objects directly is usually safer than comparing their raw values.
+
+#### 🔄 Follow-up Actions
+- [x] All previous follow-up actions are now complete.
+- [ ] Continue adding unit tests for the remaining calculator classes.
+
+#### 🏷️ Tags
+`#testing` `#TDD` `#bugfix` `#problem-solved` `#units`
+
+#### 🔗 References
+- **Related Entries**: Entry #15
+- **External Docs**: `design_guide.md`
+
+---
 ### 📅 2025-08-10 - 10:25 UTC - Entry #15
 
 #### 📋 Task Classification

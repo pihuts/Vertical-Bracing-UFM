@@ -224,7 +224,8 @@ class BoltShearCalculator:
         fnv = self.bolt_config.bolt_grade.Fnv
         fnt = self.bolt_config.bolt_grade.Fnt
         
-        logger.add_input("Demand Shear Force (frv)", demand_force_shear)
+        logger.add_input("Total Demand Shear Force (V)", demand_force_shear)
+        logger.add_input("Number of Bolts (n_bolts)", self.no_bolts)
         logger.add_input("Nominal Tensile Stress (Fnt)", fnt)
         logger.add_input("Nominal Shear Stress (Fnv)", fnv)
         logger.add_input("Bolt Area (Ab)", self.bolt_area)
@@ -234,8 +235,10 @@ class BoltShearCalculator:
         # F'nt = 1.3 * Fnt - (Fnt / (phi * Fnv)) * frv <= Fnt
         
         # frv is the required shear stress per unit area
-        frv = demand_force_shear / self.bolt_area * self.no_bolts
-        logger.add_calculation("Required Shear Stress (frv = V / Ab)", frv)
+        shear_per_bolt = demand_force_shear / self.no_bolts
+        frv = shear_per_bolt / self.bolt_area
+        logger.add_calculation("Shear per Bolt (V / n_bolts)", shear_per_bolt)
+        logger.add_calculation("Required Shear Stress (frv = V_per_bolt / Ab)", frv)
 
         # The term (Fnt / (phi * Fnv)) is the interaction coefficient
         interaction_coefficient = fnt / (resistance_factor * fnv)

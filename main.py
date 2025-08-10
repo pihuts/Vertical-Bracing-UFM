@@ -83,7 +83,7 @@ try:
         edge_distance_vertical=3 * si.inch,
         edge_distance_horizontal=1.5 * si.inch,
         bolt_diameter=7/8 * si.inch,
-        bolt_grade=BOLT_GRADES["a490_x"],
+        bolt_grade=BOLT_GRADES["a325_x"],
         material=MATERIALS["a572_gr50"],
         angle=47.2 * math.pi / 180
     )
@@ -187,6 +187,10 @@ try:
     dcr_bolt_shear = bolt_shear_checker.check_dcr_fnv(
         demand_force=applied_loads.gusset_to_column_shear / (column_endplate_connection.configuration.n_rows * column_endplate_connection.configuration.n_columns),
         number_of_shear_planes=1
+    )
+    bolt_modified_fnt = bolt_shear_checker.calculate_capacity_fnt_modified(
+        demand_force_shear=302 * si.kip,
+        debug=True
     )
     print(f"   DCR (per bolt) = {dcr_bolt_shear:.2f} {'(OK)' if dcr_bolt_shear <= 1.0 else '(FAIL)'}")
 
