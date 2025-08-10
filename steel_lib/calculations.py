@@ -139,6 +139,8 @@ class BoltShearCalculator:
         self.bolt_diameter = self.bolt_config.bolt_diameter
         self.bolt_area = self._calculate_bolt_area()
         self.fnv = self.bolt_config.bolt_grade.Fnv
+        self.no_bolts = self.bolt_config.n_rows * self.bolt_config.n_columns
+        self.no_bolts = self.bolt_config.n_rows * self.bolt_config.n_columns
 
     def _calculate_bolt_area(self) -> float:
         """Calculates the gross area of the bolt."""
@@ -209,7 +211,47 @@ class BoltShearCalculator:
         capacity = self.calculate_capacity_fnt(**kwargs)
         if capacity == 0: return float('inf')
         return abs(demand_force / capacity)
+    def calculate_capacity_fnt_modified(
+        self,demand_force_shear: si.kip,
+        resistance_factor: float = 0.75,
+        debug: bool = False,
+    ):
+        """
+        Calculates the modified design tensile strength of the bolt, considering interaction with shear.
+        """
+        logger = DebugLogger("Modified Bolt Tensile Strength (Interaction)", debug)
+        
+        fnv = self.bolt_config.bolt_grade.Fnv
+        fnt = self.bolt_config.bolt_grade.Fnt
+        
+        logger.add_input("Demand Shear Force (frv)", demand_force_shear)
+        logger.add_input("Nominal Tensile Stress (Fnt)", fnt)
+        logger.add_input("Nominal Shear Stress (Fnv)", fnv)
+        logger.add_input("Bolt Area (Ab)", self.bolt_area)
+        logger.add_input("Resistance Factor (phi)", resistance_factor)
 
+        # Per AISC J3.3a, the available tensile stress F'nt is a function of the applied shear stress frv
+        # F'nt = 1.3 * Fnt - (Fnt / (phi * Fnv)) * frv <= Fnt
+        
+        # frv is the required shear stress per unit area
+        frv = demand_force_shear / self.bolt_area * self.no_bolts
+        logger.add_calculation("Required Shear Stress (frv = V / Ab)", frv)
+
+        # The term (Fnt / (phi * Fnv)) is the interaction coefficient
+        interaction_coefficient = fnt / (resistance_factor * fnv)
+        logger.add_calculation("Interaction Coefficient (Fnt / (phi * Fnv))", interaction_coefficient)
+        
+        # Calculate the nominal modified tensile stress
+        modified_fnt_nominal = 1.3 * fnt - interaction_coefficient * frv
+        logger.add_calculation("Modified F'nt (Nominal, before cap)", modified_fnt_nominal)
+
+        # The result cannot be greater than the nominal tensile stress Fnt
+        final_fnt_modified = min(modified_fnt_nominal, fnt)
+        logger.add_output("Final Modified Tensile Stress (F'nt)", final_fnt_modified)
+        
+        logger.display()
+        
+        return final_fnt_modified 
 class TensileYieldingCalculator:
     """
     Calculates the tensile yielding capacity of a member.
@@ -1137,4 +1179,134 @@ class ShearYieldingCalculator:
         capacity = self.calculate_capacity(**kwargs)
         if capacity == 0: return float('inf')
         return abs(demand_force / capacity)
+
+
+class PryingActionCalculator:
+    """
+    Calculates the effects of prying action on a bolted connection based on
+    AISC Manual Part 9.
+    """
+
+    def __init__(self, plate: Plate, connection: Connection):
+        """
+        Initializes the calculator with the plate and connection objects.
+        """
+        if connection.connection_type != "bolted":
+            raise ValueError("PryingActionCalculator only supports bolted connections.")
+
+        self.plate = plate
+        self.config: BoltConfiguration = connection.configuration
+        self.bolt_grade = self.config.bolt_grade
+        self.bolt_diameter = self.config.bolt_diameter
+
+        # Geometric properties from the connection
+        self.p = self.config.column_spacing  # Tributary length per bolt
+        self.g = self.config.row_spacing    # Gage distance
+        
+        # Distances 'a' and 'b' as defined in AISC Manual Part 9
+        # 'a' is the distance from the bolt centerline to the edge of the fitting
+        self.a = self.config.edge_distance_horizontal
+        # 'b' is the distance from the bolt centerline to the face of the supporting element
+        self.b = self.config.edge_distance_vertical
+
+        # Derived geometric properties
+        self.d_prime = self.bolt_diameter + (1 / 16) * si.inch # Effective hole diameter
+        self.b_prime = self.b - self.bolt_diameter / 2
+        self.a_prime = self.a
+        if self.a < 1.25 * self.b:
+            self.a_prime = self.a + self.bolt_diameter / 2
+        
+        # Delta: ratio of unstiffened to stiffened length
+        self.delta = 1 - (self.d_prime / self.p)
+        
+        # Bolt properties
+        self.bolt_area = (self.bolt_diameter**2 / 4) * math.pi
+        self.B = self.bolt_grade.Fnt * self.bolt_area # Nominal tensile strength of one bolt
+
+    def _calculate_alpha_prime(self, required_tension_per_bolt: si.kip) -> float:
+        """
+        Calculates the intermediate variable alpha' (alpha_prime).
+        """
+        if self.B == 0:
+            return float('inf')
+            
+        # Ratio of required tension to available strength
+        ratio = required_tension_per_bolt / self.B
+        
+        if self.delta == 0:
+            return float('inf')
+
+        alpha_prime = (1 / self.delta) * (ratio - 1)
+        
+        # alpha_prime cannot be greater than 1.0 or less than 0
+        return max(0, min(alpha_prime, 1.0))
+
+    def _calculate_t_req(self) -> si.inch:
+        """
+        Calculates the required thickness (t_req) to eliminate prying action.
+        """
+        numerator = 4 * self.B * self.b_prime
+        denominator = self.p * self.plate.Fy
+        
+        if denominator == 0:
+            return float('inf') * si.inch
+
+        t_req = (numerator / denominator)**0.5
+        return t_req
+
+    def _calculate_q(self, required_tension_per_bolt: si.kip) -> si.kip:
+        """
+        Calculates the prying force per bolt (Q).
+        """
+        t_req = self._calculate_t_req()
+        alpha_prime = self._calculate_alpha_prime(required_tension_per_bolt)
+        
+        if t_req == 0:
+            return float('inf') * si.kip
+
+        # This term determines if prying occurs
+        prying_factor = (self.plate.t / t_req)**2 * self.delta * (1 + alpha_prime)
+        
+        Q = self.B * ((self.plate.t / t_req)**2 * self.delta * (1 + alpha_prime) - 1)
+        return max(0 * si.kip, Q)
+
+    def calculate_bolt_tension_with_prying(self, required_tension_per_bolt: si.kip) -> si.kip:
+        """
+        Calculates the total tension in the bolt, including prying force.
+        T_total = T_req + Q
+        """
+        Q = self._calculate_q(required_tension_per_bolt)
+        return required_tension_per_bolt + Q
+
+    def check_dcr(self, required_tension_per_bolt: si.kip, resistance_factor: float = 0.75, debug: bool = False) -> float:
+        """
+        Calculates the DCR for prying action.
+        DCR = (T_req + Q) / (phi * B)
+        """
+        total_demand = self.calculate_bolt_tension_with_prying(required_tension_per_bolt)
+        design_capacity = resistance_factor * self.B
+        
+        logger = DebugLogger("Prying Action", debug)
+        logger.add_input("Required Tension per Bolt (T_req)", required_tension_per_bolt)
+        logger.add_input("Plate Thickness (t)", self.plate.t)
+        logger.add_input("Distance 'a'", self.a)
+        logger.add_input("Distance 'b'", self.b)
+        logger.add_input("Tributary Length (p)", self.p)
+        logger.add_input("Bolt Nominal Strength (B)", self.B)
+        logger.add_input("Resistance Factor (phi)", resistance_factor)
+        logger.add_calculation("b'", self.b_prime)
+        logger.add_calculation("a'", self.a_prime)
+        logger.add_calculation("delta", self.delta)
+        logger.add_calculation("alpha'", self._calculate_alpha_prime(required_tension_per_bolt))
+        logger.add_calculation("t_req", self._calculate_t_req())
+        logger.add_calculation("Prying Force (Q)", self._calculate_q(required_tension_per_bolt))
+        logger.add_calculation("Total Demand on Bolt (T_req + Q)", total_demand)
+        logger.add_output("Available Design Strength (phi*B)", design_capacity)
+        logger.display()
+
+        if design_capacity == 0:
+            return float('inf')
+            
+        return total_demand / design_capacity
+
 

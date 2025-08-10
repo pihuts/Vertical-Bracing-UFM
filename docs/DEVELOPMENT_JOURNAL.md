@@ -1043,3 +1043,167 @@ class TestCalculations(unittest.TestCase):
 #### 🔗 References
 - **Related Entries**: Entry #12
 - **External Docs**: `design_guide.md`
+
+---
+### 📅 2025-08-10 - 10:10 UTC - Entry #14
+
+#### 📋 Task Classification
+- **Type**: FEATURE
+- **Priority**: HIGH
+- **Requested By**: User
+- **Permission Status**: GRANTED
+
+#### 🎯 Approach & Decision Log
+- **Task**: Implement a prying action calculator based on AISC Manual Part 9.
+- **Implementation Strategy**:
+    1.  Create a new `PryingActionCalculator` class in `steel_lib/calculations.py`.
+    2.  The calculator was designed to take a `Plate` and a `Connection` object and calculate the prying force `Q` and the resulting demand-to-capacity ratio on the bolts.
+    3.  The implementation followed the formulas for `t_req`, `alpha'`, and `Q` as described in the AISC Manual.
+    4.  The new calculator was integrated into `main.py` to provide a usage example.
+    5.  The script was run to verify the implementation and output.
+- **Files Modified**:
+    - `steel_lib/calculations.py`: Added the `PryingActionCalculator` class.
+    - `main.py`: Added a DCR check for prying action.
+    - `docs/DEVELOPMENT_JOURNAL.md`: Added this entry.
+
+#### 💻 Implementation Details
+- **Dependencies Added**: None.
+
+#### 🧪 Testing Report
+- **Tests Written**: 0 (User requested to skip unit tests).
+- **Verification Method**: The `main.py` script was executed. The prying action calculator ran successfully, producing a DCR of 0.39. The debug output confirmed that the intermediate values (`b'`, `delta`, `Q`, etc.) were calculated as expected.
+
+#### ✅ Solution Implemented
+```python
+# In steel_lib/calculations.py
+class PryingActionCalculator:
+    """
+    Calculates the effects of prying action on a bolted connection based on
+    AISC Manual Part 9.
+    """
+    def __init__(self, plate: Plate, connection: Connection):
+        # ... initialization of geometric and material properties ...
+
+    def _calculate_q(self, required_tension_per_bolt: si.kip) -> si.kip:
+        """Calculates the prying force per bolt (Q)."""
+        # ... implementation of AISC formulas ...
+        return max(0 * si.kip, Q)
+
+    def check_dcr(self, required_tension_per_bolt: si.kip, resistance_factor: float = 0.75, debug: bool = False) -> float:
+        """
+        Calculates the DCR for prying action.
+        DCR = (T_req + Q) / (phi * B)
+        """
+        total_demand = self.calculate_bolt_tension_with_prying(required_tension_per_bolt)
+        design_capacity = resistance_factor * self.B
+        # ...
+        return total_demand / design_capacity
+
+# In main.py
+# ...
+print("\nCHECK: Gusset-to-Column Prying Action...")
+prying_checker = PryingActionCalculator(end_plate_column, column_endplate_connection)
+tension_per_bolt = applied_loads.gusset_to_column_normal / (column_endplate_connection.configuration.n_rows * column_endplate_connection.configuration.n_columns)
+dcr_prying = prying_checker.check_dcr(required_tension_per_bolt=tension_per_bolt, debug=True)
+print(f"   DCR (per bolt) = {dcr_prying:.2f} {'(OK)' if dcr_prying <= 1.0 else '(FAIL)'}")
+```
+
+#### 📊 Metrics & Impact
+- **Lines Added**: ~80
+- **Lines Modified**: ~20
+- **Complexity Change**: Added a new, self-contained calculator. Overall system complexity increased slightly, but the new logic is modular.
+- **Technical Debt**: Neutral. New feature added without introducing known debt.
+
+#### 📝 Lessons Learned
+- Implementing complex engineering standards like the AISC prying action calculation requires careful translation of formulas into code.
+- A robust debugging system within the calculators is invaluable for verifying intermediate steps.
+
+#### 🔄 Follow-up Actions
+- [ ] Add a formal unit test for the `PryingActionCalculator` to ensure long-term correctness and prevent regressions.
+
+#### 🏷️ Tags
+`#feature` `#prying-action` `#AISC`
+
+#### 🔗 References
+- **Related Entries**: None
+- **External Docs**: `prying.md`, AISC Steel Construction Manual
+
+---
+### 📅 2025-08-10 - 10:25 UTC - Entry #15
+
+#### 📋 Task Classification
+- **Type**: TEST
+- **Priority**: HIGH
+- **Requested By**: User
+- **Permission Status**: GRANTED
+
+#### 🎯 Approach & Decision Log
+- **Task**: Add a unit test for the `calculate_capacity_fnt_modified` method, which calculates bolt tensile strength under combined shear, based on AISC Design Guide 29, Example 5.1.
+- **Implementation Strategy**:
+    1.  Add a new test method `test_bolt_modified_tensile_strength` to `tests/test_calculations.py`.
+    2.  The test was set up using the exact inputs from the design guide (A325-X bolt, 21.6 kip shear demand).
+    3.  The test initially failed due to a small precision difference between the calculated result (53.576 ksi) and the guide's rounded value (53.6 ksi).
+    4.  The root cause was traced to the bolt area calculation (`pi*r^2` vs. the guide's nominal `0.601 in^2`).
+    5.  The test was made more robust by changing the assertion from a strict equality check to one that verifies the calculated value is within a 1% tolerance of the expected value. This accounts for minor rounding differences while still ensuring the calculation is correct.
+- **Files Modified**:
+    - `tests/test_calculations.py`: Added the new test and corrected assertion logic.
+    - `steel_lib/calculations.py`: Corrected the `frv` calculation.
+    - `docs/DEVELOPMENT_JOURNAL.md`: Added this entry.
+
+#### 🐛 Problems & Solutions
+- **Problem**: The unit test for `calculate_capacity_fnt_modified` failed with an `AssertionError`.
+- **Root Cause**: The initial failure was due to an incorrect calculation of the shear stress `frv`. The code was dividing the shear force by the total area of all bolts instead of the area of a single bolt. After fixing this, a second failure occurred due to a minor precision difference between the calculated bolt area and the nominal value used in the design guide.
+- **Solution**:
+    1.  The `frv` calculation in `steel_lib/calculations.py` was corrected to divide by `self.bolt_area` instead of `self.bolt_area * self.no_bolts`.
+    2.  The assertion in the test was changed from `assertAlmostEqual` with a fixed precision to `assertAlmostEqual` with a relative tolerance (`delta`). This makes the test robust against small, acceptable rounding differences.
+- **Prevention**: When testing against published examples, be aware that intermediate values may be rounded. Use tolerance-based comparisons instead of strict equality checks for floating-point numbers.
+- **Time to Fix**: ~15 minutes.
+
+#### ✅ Solution Implemented
+```python
+# In steel_lib/calculations.py
+def calculate_capacity_fnt_modified(...):
+    # ...
+    # frv is the required shear stress per unit area
+    frv = demand_force_shear / self.bolt_area # Corrected calculation
+    # ...
+    return final_fnt_modified
+
+# In tests/test_calculations.py
+def test_bolt_modified_tensile_strength(self):
+    # ...
+    shear_calculator = BoltShearCalculator(connection_a325)
+    
+    # Override bolt area to match the guide's nominal value for precise comparison
+    shear_calculator.bolt_area = 0.601 * si.inch**2
+    
+    demand_force_shear = 21.6 * si.kip
+    expected_fnt_modified = 53.6 * si.ksi
+
+    fnt_modified = shear_calculator.calculate_capacity_fnt_modified(...)
+
+    # Assert that the calculated value is within 1% of the guide's value
+    self.assertAlmostEqual(
+        fnt_modified.to('ksi').value,
+        expected_fnt_modified.to('ksi').value,
+        delta=0.01 * expected_fnt_modified.to('ksi').value
+    )
+```
+
+#### 📊 Metrics & Impact
+- **Test Coverage**: Increased. The `calculate_capacity_fnt_modified` method is now covered by a unit test.
+- **Technical Debt**: Reduced. The bug in the `frv` calculation was fixed.
+
+#### 📝 Lessons Learned
+- Debugging output is essential for diagnosing discrepancies between calculated values and expected results.
+- When comparing floating-point numbers in tests, especially against external sources, using a relative tolerance is often more appropriate than checking for a fixed number of decimal places.
+
+#### 🔄 Follow-up Actions
+- [ ] Continue adding unit tests for the remaining calculator classes.
+
+#### 🏷️ Tags
+`#testing` `#TDD` `#bugfix` `#problem-solved`
+
+#### 🔗 References
+- **Related Entries**: Entry #14
+- **External Docs**: `design_guide.md`

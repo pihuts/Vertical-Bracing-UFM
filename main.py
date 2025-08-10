@@ -25,6 +25,7 @@ from steel_lib.calculations import (
     WebLocalYieldingCalculator,
     WebLocalCrippingCalculator,
     ShearYieldingCalculator,
+    PryingActionCalculator,
 )
 
 # --- 1. Define Members, Connections, and Initial Loads ---
@@ -188,6 +189,14 @@ try:
         number_of_shear_planes=1
     )
     print(f"   DCR (per bolt) = {dcr_bolt_shear:.2f} {'(OK)' if dcr_bolt_shear <= 1.0 else '(FAIL)'}")
+
+    # h) Gusset-to-Column Interface: Prying Action
+    print("\nCHECK: Gusset-to-Column Prying Action...")
+    prying_checker = PryingActionCalculator(end_plate_column, column_endplate_connection)
+    # Check against the normal force component on the column interface
+    tension_per_bolt = applied_loads.gusset_to_column_normal / (column_endplate_connection.configuration.n_rows * column_endplate_connection.configuration.n_columns)
+    dcr_prying = prying_checker.check_dcr(required_tension_per_bolt=tension_per_bolt, debug=True)
+    print(f"   DCR (per bolt) = {dcr_prying:.2f} {'(OK)' if dcr_prying <= 1.0 else '(FAIL)'}")
 
 
     print("\n\nScript finished successfully.")

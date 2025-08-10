@@ -16,6 +16,10 @@ No code modifications without explicit user permission. Present options, await d
 ### Directive 4: Problem Documentation
 Every problem encountered MUST be documented with root cause analysis and prevention strategies.
 
+### Directive 5: Engineering Logic Integrity
+The agent MUST NOT change any engineering logic or equations within the calculation modules. This knowledge requires domain expertise. The agent is permitted to refactor, organize, and add debugging/logging to this code, but any changes to the core formulas or logic must be presented as a suggestion and receive explicit user approval before implementation.
+
+
 ---
 
 ## 📜 MANDATORY WORKFLOW & RESPONSE FORMAT

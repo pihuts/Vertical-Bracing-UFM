@@ -16,6 +16,7 @@ from steel_lib.calculations import (
     PlateTensileYieldingCalculator,
     WebLocalYieldingCalculator,
     WebLocalCrippingCalculator,
+    BoltShearCalculator,
 )
 from steel_lib.materials import MATERIALS, BOLT_GRADES, WELD_ELECTRODES
 
@@ -179,6 +180,46 @@ class TestCalculations(unittest.TestCase):
 
         # Assertion
         self.assertAlmostEqual(dcr, expected_dcr, places=2)
+
+    def test_bolt_modified_tensile_strength(self):
+        """
+        Test the calculate_capacity_fnt_modified method against the AISC Design Guide 29.
+        """
+        # Values from Design Guide Example 5.1, page 61
+        # The guide uses 7/8" ASTM A325-X bolts for this check.
+        connection_a325 = ConnectionFactory.create_bolted_connection(
+            component=ConnectionComponent.FLANGE,
+            row_spacing=3.0 * si.inch,
+            column_spacing=3.0 * si.inch,
+            n_rows=7,
+            n_columns=2,
+            edge_distance_vertical=3 * si.inch,
+            edge_distance_horizontal=1.5 * si.inch,
+            bolt_diameter=7/8 * si.inch,
+            bolt_grade=BOLT_GRADES["a325_x"], # Using A325 as per the guide's calculation
+            material=MATERIALS["a572_gr50"],
+            angle=47.2 * math.pi / 180
+        )
+        
+        shear_calculator = BoltShearCalculator(connection_a325)
+        shear_calculator.bolt_area = 0.601 * si.inch**2 # Override with guide's value
+        
+        # Required shear strength per bolt (ruv)
+        demand_force_shear = 21.6 * si.kip
+        
+        # Expected modified tensile stress (F'nt) from the guide
+        expected_fnt_modified = 53.6 * si.ksi
+
+        # Calculate the modified tensile strength
+        fnt_modified = shear_calculator.calculate_capacity_fnt_modified(
+            demand_force_shear=demand_force_shear,
+            resistance_factor=0.75,
+            debug=True
+        )
+
+        # Assert that the calculated value is within 1% of the guide's value
+        self.assertAlmostEqual(fnt_modified.to('ksi').value, expected_fnt_modified.to('ksi').value, delta=0.01 * expected_fnt_modified.to('ksi').value)
+
 
 if __name__ == '__main__':
     unittest.main()
