@@ -86,6 +86,22 @@ try:
 
     endpl_gusset_connection = ConnectionFactory.create_bolted_connection(
         member_a=end_plate_column,
+        member_b=gusset_plate,
+        component_a=ConnectionComponent.TOTAL,
+        component_b=ConnectionComponent.TOTAL,
+        row_spacing=5.50 * si.inch,
+        column_spacing=3.0 * si.inch,
+        n_rows=2,
+        n_columns=7,
+        edge_distance_vertical=1.75 * si.inch,
+        edge_distance_horizontal=3 * si.inch,
+        bolt_diameter=7/8 * si.inch,
+        bolt_grade=BOLT_GRADES["a325_x"],
+        material=MATERIALS["a572_gr50"],
+        angle=47.2 * math.pi / 180
+    )
+    endpl_column_connection = ConnectionFactory.create_bolted_connection(
+        member_a=end_plate_column,
         member_b=support,
         component_a=ConnectionComponent.TOTAL,
         component_b=ConnectionComponent.TOTAL,
@@ -93,13 +109,14 @@ try:
         column_spacing=3.0 * si.inch,
         n_rows=2,
         n_columns=7,
-        edge_distance_vertical=3 * si.inch,
-        edge_distance_horizontal=3 * si.inch,
+        edge_distance_vertical=1.75 * si.inch,
+        edge_distance_horizontal=1.75 * si.inch,
         bolt_diameter=7/8 * si.inch,
         bolt_grade=BOLT_GRADES["a325_x"],
         material=MATERIALS["a572_gr50"],
         angle=47.2 * math.pi / 180
     )
+
 
     test_1 = BoltShearCalculator(
         connection=brace_gusset_connection)
@@ -169,8 +186,18 @@ try:
     print(applied_loads)
     # print(BoltShearCalculator(endpl_gusset_connection).calculate_capacity_fnt_modified(302 * si.kip,debug=True)* 0.601 *si.inch**2)   # Example of how to use the modified shear capacity
     # test_3_web_local_yield.calculate_capacity(debug=True)
+    test_4_connection_capacity = ConnectionCapacityCalculator(
+        endpoint=endpl_gusset_connection.member_a,
+        connection=endpl_gusset_connection,
+        loading_orientation="Axial",
+        
 
-
+    )
+    test_4_connection_capacity.calculate_capacity(debug=True,number_of_shear_planes=2)
+    test_4_blockshear = BlockShearCalculator(endpoint = endpl_column_connection.member_a, connection=endpl_column_connection,loading_orientation="Axial")
+    test_4_blockshear.calculate_capacity(debug=True)
+    test_4_prying = PryingActionCalculator(
+        plate=support,
 
 
 

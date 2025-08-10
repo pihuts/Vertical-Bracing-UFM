@@ -390,6 +390,15 @@ class BlockShearCalculator:
         self.bolt_config: BoltConfiguration = connection.configuration
         self.loading_orientation = loading_orientation
         self.loading_condition = loading_condition
+        self.row_spacing = self.bolt_config.row_spacing
+        self.column_spacing = self.bolt_config.column_spacing
+        #check if member have width or d then use which is applicable
+        if hasattr(self.member, 'width'):
+            self.width = self.member.width
+        elif hasattr(self.member, 'd'):
+            self.width = self.member.d
+        print(f"Member width: {self.width}")
+
 
         # CORRECTED: _get_member_thickness now always returns a unit-aware value
         self.thickness = thickness if thickness is not None else get_applicable_thickness(endpoint)
@@ -401,66 +410,161 @@ class BlockShearCalculator:
             self.failure_pattern = "U"
 
     # --- Calculation methods now correctly include loading_condition ---
-    def _calculate_l_shear_yield_path(self) -> float:
-        spacing, rows , edge_dist = (self.bolt_config.row_spacing, self.bolt_config.n_rows, self.bolt_config.edge_distance_vertical) if self.loading_orientation == "Shear" else (self.bolt_config.column_spacing, self.bolt_config.n_columns, self.bolt_config.edge_distance_horizontal)
+    def _calculate_l_shear_yield_path(self, debug=False) -> float:
+        logger = DebugLogger("L-Pattern Gross Shear Area (Agv)", debug)
+        spacing, rows, edge_dist = (self.bolt_config.row_spacing, self.bolt_config.n_rows, self.bolt_config.edge_distance_vertical) if self.loading_orientation == "Shear" else (self.bolt_config.column_spacing, self.bolt_config.n_columns, self.bolt_config.edge_distance_horizontal)
+        
+        logger.add_input("Spacing", spacing)
+        logger.add_input("Rows/Columns", rows)
+        logger.add_input("Edge Distance", edge_dist)
+        
         length = spacing * (rows - 1) + edge_dist
-        # Apply loading_condition to the area calculation as in the original code
-        return length * self.thickness * self.loading_condition
+        logger.add_calculation("Gross Length (Lgv = spacing * (rows - 1) + edge_dist)", length)
+        
+        area = length * self.thickness * self.loading_condition
+        logger.add_output("Gross Shear Area (Agv = Lgv * t * loading_condition)", area)
+        logger.display()
+        return area
 
-    def _calculate_l_shear_rupture_path(self) -> float:
-        gross_area = self._calculate_l_shear_yield_path()
+    def _calculate_l_shear_rupture_path(self, debug=False) -> float:
+        logger = DebugLogger("L-Pattern Net Shear Area (Anv)", debug)
+        gross_area = self._calculate_l_shear_yield_path(debug=False) # Don't double-log inputs
         rows = self.bolt_config.n_rows if self.loading_orientation == "Shear" else self.bolt_config.n_columns
-        # Hole deduction must also be scaled by loading_condition
-        hole_area_deduction = (rows - 0.5) * self.bolt_hole_diameter * self.thickness * self.loading_condition
-        return gross_area - hole_area_deduction
 
-    def _calculate_l_tension_rupture_path(self) -> float:
+        logger.add_input("Gross Shear Area (Agv)", gross_area)
+        logger.add_input("Rows/Columns", rows)
+        logger.add_input("Bolt Hole Diameter", self.bolt_hole_diameter)
+        logger.add_input("Thickness", self.thickness)
+
+        hole_area_deduction = (rows - 0.5) * self.bolt_hole_diameter * self.thickness * self.loading_condition
+        logger.add_calculation("Hole Deduction ((rows - 0.5) * d_hole * t)", hole_area_deduction)
+
+        net_area = gross_area - hole_area_deduction
+        logger.add_output("Net Shear Area (Anv = Agv - deduction)", net_area)
+        logger.display()
+        return net_area
+
+    def _calculate_l_tension_rupture_path(self, debug=False) -> float:
+        logger = DebugLogger("L-Pattern Net Tension Area (Ant)", debug)
         if self.loading_orientation == "Axial":
             spacing, rows, edge_dist = self.bolt_config.row_spacing, self.bolt_config.n_rows, self.bolt_config.edge_distance_vertical
         else:
             spacing, rows, edge_dist = self.bolt_config.column_spacing, self.bolt_config.n_columns, self.bolt_config.edge_distance_horizontal
+        
+        logger.add_input("Spacing", spacing)
+        logger.add_input("Rows/Columns", rows)
+        logger.add_input("Edge Distance", edge_dist)
+        logger.add_input("Bolt Hole Diameter", self.bolt_hole_diameter)
+        logger.add_input("Thickness", self.thickness)
 
-        net_length = (spacing * (rows - 1) + edge_dist) - ((rows - 0.5) * self.bolt_hole_diameter)
-        return net_length * self.thickness * self.loading_condition
+        gross_length = spacing * (rows - 1) + edge_dist
+        logger.add_calculation("Gross Tension Length", gross_length)
+        
+        hole_deduction_length = (rows - 0.5) * self.bolt_hole_diameter
+        logger.add_calculation("Hole Deduction Length", hole_deduction_length)
 
-    def _calculate_u_tension_rupture_path(self) -> float:
+        net_length = gross_length - hole_deduction_length
+        logger.add_calculation("Net Length (Lnt)", net_length)
+
+        net_area = net_length * self.thickness * self.loading_condition
+        logger.add_output("Net Tension Area (Ant = Lnt * t * loading_condition)", net_area)
+        logger.display()
+        return net_area
+
+    def _calculate_u_tension_rupture_path(self, debug=False) -> float:
+        logger = DebugLogger("U-Pattern Net Tension Area (Ant)", debug)
         spacing, rows = self.bolt_config.row_spacing, self.bolt_config.n_rows
-        net_length = (spacing * (rows - 1)) - ((rows - 1) * self.bolt_hole_diameter)
-        return net_length * self.thickness * self.loading_condition
+        
+        logger.add_input("Spacing", spacing)
+        logger.add_input("Rows", rows)
+        logger.add_input("Bolt Hole Diameter", self.bolt_hole_diameter)
+        logger.add_input("Thickness", self.thickness)
+
+        gross_length = spacing * (rows - 1)
+        logger.add_calculation("Gross Length", gross_length)
+
+        hole_deduction_length = (rows - 1) * self.bolt_hole_diameter
+        logger.add_calculation("Hole Deduction Length", hole_deduction_length)
+
+        net_length = gross_length - hole_deduction_length
+        logger.add_calculation("Net Length (Lnt)", net_length)
+        if self.width:
+            net_area0 = net_length * self.thickness * self.loading_condition
+
+            net_area1 = ((self.width - self.row_spacing)/2 - self.bolt_hole_diameter/2) * self.thickness * 2
+            net_area = min(net_area0, net_area1)
+        else:
+            net_area = net_length * self.thickness * self.loading_condition
+        
+        logger.add_output("Net Tension Area (Ant = Lnt * t * loading_condition)", net_area)
+        logger.display()
+        return net_area  # Ensure we return the minimum of the two calculated areas
 
     def calculate_capacity(self, resistance_factor: float = 0.75, debug: bool = False) -> float:
-        Ubs = 1.0
+        """
+        Calculates the block shear capacity with detailed logging of all inputs and outputs.
+        """
+        logger = DebugLogger(f"Block Shear {self.failure_pattern}-Pattern", debug)
+        
+        Ubs = 1.0  # Shear lag factor, typically 1.0 for block shear
         Fu, Fy = self.member.Fu, self.member.Fy
+        
+        logger.add_input("Member Type", self.member.Type)
+        logger.add_input("Failure Pattern", self.failure_pattern)
+        logger.add_input("Loading Orientation", self.loading_orientation)
+        logger.add_input("Ultimate Strength (Fu)", Fu)
+        logger.add_input("Yield Strength (Fy)", Fy)
+        logger.add_input("Thickness (t)", self.thickness)
+        logger.add_input("Bolt Hole Diameter", self.bolt_hole_diameter)
+        logger.add_input("Shear Lag Factor (Ubs)", Ubs)
+        logger.add_input("Resistance Factor (phi)", resistance_factor)
+        logger.add_input("Loading Condition Multiplier", self.loading_condition)
+        logger.add_input("--- Bolt Configuration ---", "")
+        logger.add_input("Bolt Rows (n_rows)", self.bolt_config.n_rows)
+        logger.add_input("Bolt Columns (n_columns)", self.bolt_config.n_columns)
+        logger.add_input("Row Spacing", self.bolt_config.row_spacing)
+        logger.add_input("Column Spacing", self.bolt_config.column_spacing)
+        logger.add_input("Vertical Edge Distance", self.bolt_config.edge_distance_vertical)
+        logger.add_input("Horizontal Edge Distance", self.bolt_config.edge_distance_horizontal)
+        logger.add_input("------------------------", "")
+
         tension_rupture_component = 0.0
 
         if self.failure_pattern == "L":
-            shear_yield_component = self._calculate_l_shear_yield_path()
-            shear_rupture_component = self._calculate_l_shear_rupture_path()
-            tension_rupture_component = self._calculate_l_tension_rupture_path()
-            # ... (debug print statements)
-
+            shear_yield_component = self._calculate_l_shear_yield_path(debug=debug)
+            shear_rupture_component = self._calculate_l_shear_rupture_path(debug=debug)
+            tension_rupture_component = self._calculate_l_tension_rupture_path(debug=debug)
         elif self.failure_pattern == "U":
-            shear_yield_component = self._calculate_l_shear_yield_path() * 2
-            shear_rupture_component = self._calculate_l_shear_rupture_path() * 2
-            tension_rupture_component = self._calculate_u_tension_rupture_path()
-            # ... (debug print statements)
+            shear_yield_component = self._calculate_l_shear_yield_path(debug=debug) * 2
+            shear_rupture_component = self._calculate_l_shear_rupture_path(debug=debug) * 2
+            tension_rupture_component = self._calculate_u_tension_rupture_path(debug=debug)
 
-        shear_force = 0.60 * min(shear_yield_component * Fy, shear_rupture_component * Fu)
-        tension_force = Ubs * Fu * tension_rupture_component
+        logger.add_calculation("Gross Shear Area (Agv)", shear_yield_component)
+        logger.add_calculation("Net Shear Area (Anv)", shear_rupture_component)
+        logger.add_calculation("Net Tension Area (Ant)", tension_rupture_component)
 
-        nominal_capacity = tension_force + shear_force
+        # --- AISC J4.3 ---
+        # The available shear strength shall be the lesser of shear yielding and shear rupture
+        shear_yield_strength = 0.60 * Fy * shear_yield_component
+        shear_rupture_strength = 0.60 * Fu * shear_rupture_component
+        governing_shear_strength = min(shear_yield_strength, shear_rupture_strength)
+        
+        logger.add_calculation("Shear Yielding Strength (0.6 * Fy * Agv)", shear_yield_strength)
+        logger.add_calculation("Shear Rupture Strength (0.6 * Fu * Anv)", shear_rupture_strength)
+        logger.add_output("Governing Shear Strength", governing_shear_strength)
+
+        # The available tensile strength
+        tension_rupture_strength = Ubs * Fu * tension_rupture_component
+        logger.add_calculation("Tension Rupture Strength (Ubs * Fu * Ant)", tension_rupture_strength)
+
+        # Nominal capacity is the sum of the tension rupture and the governing shear strength
+        nominal_capacity = tension_rupture_strength + governing_shear_strength
+        logger.add_calculation("Nominal Capacity (Rn = Tension Strength + Shear Strength)", nominal_capacity)
+
+        # Final design capacity
         design_capacity = resistance_factor * nominal_capacity
-
-        logger = DebugLogger(f"Block Shear {self.failure_pattern}-Pattern", debug)
-        logger.add_input("Gross Shear Area (Agv)", shear_yield_component)
-        logger.add_input("Net Shear Area (Anv)", shear_rupture_component)
-        logger.add_input("Net Tension Area (Ant)", tension_rupture_component)
-        logger.add_input("Resistance Factor (phi)", resistance_factor)
-        logger.add_calculation("Shear Yielding (0.6*Fy*Agv)", (0.6 * Fy * shear_yield_component))
-        logger.add_calculation("Shear Rupture (0.6*Fu*Anv)", (0.6 * Fu * shear_rupture_component))
-        logger.add_calculation("Tension Rupture (Ubs*Fu*Ant)", tension_force)
-        logger.add_calculation("Nominal Capacity (Rn)", nominal_capacity)
-        logger.add_output("Design Capacity (phiRn)", design_capacity)
+        logger.add_output("Design Capacity (phi * Rn)", design_capacity)
+        
         logger.display()
 
         return design_capacity
