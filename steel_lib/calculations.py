@@ -968,7 +968,7 @@ class WebLocalYieldingCalculator:
         for name in potential_names:
             if hasattr(obj, name):
                 value = getattr(obj, name)
-                return value if hasattr(value, "units") else value * si.inch
+                return value if hasattr(value, "units") else value
         raise AttributeError(
             f"Object does not have any of the expected attributes: {potential_names}"
         )
@@ -978,40 +978,58 @@ class WebLocalYieldingCalculator:
         Calculates the design web local yielding strength (phiRn).
         """
         logger = DebugLogger("Web Local Yielding", debug)
-        logger.add_input("Yield Strength (Fy)", self._Fy)
-        logger.add_input("Web Thickness (tw)", self._tw)
-        logger.add_input("Detailing Distance (k)", self._k)
-        logger.add_input("Member Depth (d)", self._d)
-        logger.add_input("Connection Length (lb)", self._connection_length)
-        logger.add_input("End Plate Thickness (tpl)", self._end_plate_thickness)
-        logger.add_input("Resistance Factor (phi)", resistance_factor)
-        logger.add_input("Loading Condition", self._loading_condition)
+        try:
+            logger.add_input("Yield Strength (Fy)", self._Fy)
+            logger.add_input("Web Thickness (tw)", self._tw)
+            logger.add_input("Detailing Distance (k)", self._k)
+            logger.add_input("Member Depth (d)", self._d)
+            logger.add_input("Connection Length (lb)", self._connection_length)
+            logger.add_input("End Plate Thickness (tpl)", self._end_plate_thickness)
+            logger.add_input("Resistance Factor (phi)", resistance_factor)
+            logger.add_input("Loading Condition", self._loading_condition)
 
-        clip_dist = 3 / 4 * si.inch
-        connection_load_centroid = (
-            self._connection_length / 2 + clip_dist + self._end_plate_thickness
-        )
-        logger.add_calculation("Connection Load Centroid", connection_load_centroid)
+            clip_dist = 3 / 4 * si.inch
+            
+            # Log inputs before calculation
+            logger.add_calculation("Input: self._connection_length", self._connection_length)
+            logger.add_calculation("Input: clip_dist", clip_dist)
+            logger.add_calculation("Input: self._end_plate_thickness", self._end_plate_thickness)
 
-        if connection_load_centroid <= self._d:
-            multiplier_k = 2.5
-        else:
-            multiplier_k = 5.0
-        logger.add_calculation("Multiplier (k)", multiplier_k)
+            connection_load_centroid = (
+                self._connection_length / 2 + clip_dist + self._end_plate_thickness
+            )
+            
+            # Log output of calculation
+            logger.add_calculation("Output: Connection Load Centroid", connection_load_centroid)
 
-        bearing_length = (multiplier_k * self._k) + self._connection_length
-        logger.add_calculation("Bearing Length", bearing_length)
+            # Log values for comparison
+            logger.add_calculation("Comparison Input: self._d", self._d)
+            try:
+                logger.add_calculation("DEBUG: connection_load_centroid units", connection_load_centroid.units)
+                logger.add_calculation("DEBUG: self._d units", self._d.units)
+            except AttributeError:
+                logger.add_calculation("DEBUG: One of the values does not have units.", "N/A")
 
-        nominal_capacity = self._Fy * self._tw * bearing_length
-        logger.add_calculation("Nominal Capacity (Pn)", nominal_capacity)
+            if connection_load_centroid <= self._d:
+                multiplier_k = 2.5
+            else:
+                multiplier_k = 5.0
+            logger.add_calculation("Multiplier (k)", multiplier_k)
 
-        design_capacity = (
-            nominal_capacity * resistance_factor * self._loading_condition
-        )
-        logger.add_output("Design Capacity (phiRn)", design_capacity)
-        logger.display()
+            bearing_length = (multiplier_k * self._k) + self._connection_length
+            logger.add_calculation("Bearing Length", bearing_length)
 
-        return design_capacity
+            nominal_capacity = self._Fy * self._tw * bearing_length
+            logger.add_calculation("Nominal Capacity (Pn)", nominal_capacity)
+
+            design_capacity = (
+                nominal_capacity * resistance_factor * self._loading_condition
+            )
+            logger.add_output("Design Capacity (phiRn)", design_capacity)
+            
+            return design_capacity
+        finally:
+            logger.display()
 
     def check_dcr(self, demand_force: si.kip, **kwargs) -> float:
         """Calculates the demand-to-capacity ratio."""

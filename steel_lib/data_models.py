@@ -145,7 +145,7 @@ class WeldElectrode:
 
 WeldType = Literal["fillet", "groove"]
 
-@dataclass
+@dataclass(kw_only=True)
 class WeldConfiguration:
     """
     Defines the geometry and properties of a specific weld line in a connection.

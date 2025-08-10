@@ -100,15 +100,7 @@ try:
         material=MATERIALS["a572_gr50"],
         angle=47.2 * math.pi / 180
     )
-    beam_gusset_connection = ConnectionFactory.create_welded_connection(
-        member_a=gusset_plate,
-        member_b=beam,
-        component_a=ConnectionComponent.LENGTH,
-        component_b=ConnectionComponent.WEB,
-        weld_size=0.3125 * si.inch,
-        length=gusset_plate.length,
-        electrode=WELD_ELECTRODES["e70xx"]
-    )
+
     test_1 = BoltShearCalculator(
         connection=brace_gusset_connection)
     test_1.calculate_capacity_fnt(1,debug=True)
@@ -136,6 +128,15 @@ try:
     dim_ufm = test_2_ufm.get_dimensions(debug = True)
     final_multipliers = test_2_ufm.get_loads_multipliers(debug = True)
     gusset_plate.set_dimensions(dim_ufm)
+    beam_gusset_connection = ConnectionFactory.create_welded_connection(
+        member_a=gusset_plate,
+        member_b=beam,
+        component_a=ConnectionComponent.LENGTH,
+        component_b=ConnectionComponent.WEB,
+        weld_size=0.3125 * si.inch,
+        length=gusset_plate.length,
+        electrode=WELD_ELECTRODES["e70xx"]
+    )
     initial_loads = DesignLoads(
         Pu=840 * si.kip,
         Vu=50.0 * si.kip,
@@ -150,7 +151,9 @@ try:
     test_2_plate_yielding.calculate_capacity_vertical(debug=True)
 
     test_3_web_local_yield = WebLocalYieldingCalculator(endpoint = beam_gusset_connection.member_b, connection = beam_gusset_connection, end_plate=end_plate_column)
-    print(test_3_web_local_yield._connection_length)
+    test_3_web_local_yield.calculate_capacity(debug=True)
+    test_3_web_local_cripp
+
     # test_3_web_local_yield.calculate_capacity(debug=True)
 
 
