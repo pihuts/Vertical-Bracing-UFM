@@ -24,17 +24,48 @@ class MemberFactory:
         # 1. Create the basic steelpy section object
         section = getattr(section_class, section_name)
 
-        # 2. Add the necessary material and type properties
+        # 2. Enrich the raw steelpy object with units for all relevant attributes
+        MemberFactory._enrich_member_with_units(section)
+
+        # 3. Add the necessary material and type properties
         section.add_property("Fy", material.Fy)
         section.add_property("Fu", material.Fu)
         section.add_property("E", material.E)
         section.add_property("Type", shape_type)
         section.loading_condition = loading_condition
 
-        # 3. Now that 'Type' exists, enrich it with geometric properties
+        # 4. Now that units and type exist, enrich it with geometric properties
         section.geometry = MemberFactory._create_geometric_properties(section)
         
         return section
+
+    @staticmethod
+    def _enrich_member_with_units(member: Any):
+        """
+        Iterates through a member's attributes and applies units based on a
+        predefined mapping. This ensures that all downstream calculations
+        can rely on unit-aware quantities.
+        """
+        # This mapping defines the expected units for common steelpy attributes.
+        # It can be extended as needed for other section types.
+        unit_map = {
+            # Linear dimensions
+            "d": si.inch, "bf": si.inch, "tf": si.inch, "tw": si.inch,
+            "k": si.inch, "k_det": si.inch, "x": si.inch, "y": si.inch,
+            "T": si.inch, "b": si.inch, "t": si.inch,
+            # Area properties
+            "area": si.inch**2,
+            # Section moduli & moments of inertia
+            "Zx": si.inch**3, "Zy": si.inch**3, "Sx": si.inch**3, "Sy": si.inch**3,
+            "Ix": si.inch**4, "Iy": si.inch**4,
+        }
+
+        for attr, unit in unit_map.items():
+            if hasattr(member, attr):
+                raw_value = getattr(member, attr)
+                # Ensure we don't re-apply units to a value that already has them
+                if isinstance(raw_value, (int, float)):
+                    setattr(member, attr, raw_value * unit)
 
     @staticmethod
     def _create_geometric_properties(member: Any) -> GeometricProperties:

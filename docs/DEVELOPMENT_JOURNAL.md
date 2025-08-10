@@ -1432,3 +1432,38 @@ def test_bolt_modified_tensile_strength(self):
 #### 📝 Lessons Learned
 -   **What Worked**: Consolidating calculation logic within a single method made it easier to implement step-by-step logging.
 -   **What to Remember**: For complex calculations, providing detailed debug logs for each intermediate step is crucial for verification and troubleshooting.
+
+### 📅 2025-08-10 - 09:53 - Entry #3
+
+#### 📋 Task Classification
+-   **Type**: FEATURE
+-   **Priority**: HIGH
+-   **Requested By**: User
+-   **Permission Status**: GRANTED
+
+#### 🎯 Approach & Decision Log
+-   **Problem**: `steelpy` member attributes lack physical units, causing potential downstream calculation errors.
+-   **Options Considered**:
+    1.  **Enrich and Wrap**: Add a function to iterate through attributes and apply units from a predefined map.
+    2.  **On-the-Fly Calculation**: Apply units at the moment of calculation.
+    3.  **Proxy Class Wrapper**: Use a wrapper class with `__getattr__` to apply units transparently.
+-   **Option Selected**: Option 1 was selected by the user.
+-   **Selection Reasoning**: This option provides the best balance of simplicity, safety, and maintainability for the project.
+-   **Implementation Strategy**:
+    1.  Define a new private static method `_enrich_member_with_units` in `MemberFactory`.
+    2.  Create a dictionary within this method to map attribute names (e.g., "d", "bf", "area") to their corresponding `forallpeople` units (e.g., `si.inch`, `si.inch**2`).
+    3.  The method iterates through the map, checks if the member has the attribute, and if the attribute is a raw number, overwrites it with a unit-aware value.
+    4.  Call this new enrichment method in `create_steelpy_member` immediately after the `steelpy` section is created.
+    5.  Verify the change by temporarily modifying and running `main copy.py`.
+
+#### 💻 Implementation Details
+-   **Files Modified**:
+    -   `steel_lib/member_factory.py`: Added the `_enrich_member_with_units` method and integrated it into the `create_steelpy_member` factory function to automatically apply physical units to raw numeric attributes from `steelpy` objects.
+
+#### 🧪 Testing Report
+-   **Tests Written**: 0 (Manual verification).
+-   **Verification**: Temporarily modified `main copy.py` to create an L-shape member and print its `.d` attribute. The output `6.000 inch` confirmed that the unit was correctly applied. The test code was subsequently removed.
+
+#### 📝 Lessons Learned
+-   **What Worked**: The "Enrich and Wrap" strategy was effective and minimally invasive. Creating a centralized unit map makes the system predictable and easy to extend.
+-   **What to Remember**: When integrating external libraries that are not unit-aware, it's crucial to have a clear "boundary" where data is sanitized and enriched with the application's internal data types (like units) to ensure consistency and prevent errors.
