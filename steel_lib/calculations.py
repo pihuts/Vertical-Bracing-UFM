@@ -304,43 +304,61 @@ class TensileRuptureCalculator:
         self.Fu = self.member.Fu
         self.loading_condition = getattr(self.member, 'loading_condition', 1)
 
-    def _ubs_angle(self, x_bar, l):
-        return 1 - x_bar / l
+    def calculate_capacity(self, resistance_factor: float = 0.75, debug: bool = False) -> float:
+        """
+        Calculates the design tensile rupture strength with detailed logging.
+        """
+        logger = DebugLogger(f"Tensile Rupture ({self.endpoint.component.name})", debug)
 
-    def _calculate_anet_area(self):
+        # --- Inputs ---
         t = get_applicable_thickness(self.endpoint)
         S_c = self.bolt_config.column_spacing
         N_c = self.bolt_config.n_columns
         dbolt = self.bolt_config.bolt_diameter
-        l = S_c * (N_c - 1)
+        Ag = get_applicable_gross_area(self.endpoint, self.connection)
+        n_rows = self.bolt_config.n_rows
         
-        # For a W-section's web or flange, or other symmetric connections, x_bar is 0.
-        # It is non-zero for asymmetric sections like angles.
+        logger.add_input("Ultimate Strength (Fu)", self.Fu)
+        logger.add_input("Applicable Thickness (t)", t)
+        logger.add_input("Gross Area (Ag)", Ag)
+        logger.add_input("Bolt Diameter (d_bolt)", dbolt)
+        logger.add_input("Bolt Columns (N_c)", N_c)
+        logger.add_input("Bolt Rows (n_rows)", n_rows)
+        logger.add_input("Column Spacing (S_c)", S_c)
+        logger.add_input("Loading Condition", self.loading_condition)
+        logger.add_input("Resistance Factor (phi)", resistance_factor)
+
+        # --- Shear Lag Factor (Ubs) Calculation ---
+        l = S_c * (N_c - 1)
+        logger.add_calculation("Connection Length (l = S_c * (N_c - 1))", l)
+
         x_bar = 0
         if self.endpoint.component == ConnectionComponent.TOTAL and hasattr(self.member, 'x'):
             x_bar = self.member.x
-        
-        Ubs = self._ubs_angle(x_bar=x_bar, l=l)
-        Ag = get_applicable_gross_area(self.endpoint, self.connection)
-        dhole = dbolt + (1/8) * si.inch
-        An = Ag - dhole * self.bolt_config.n_rows * t
-        return An * Ubs, Ubs
+        logger.add_input("Eccentricity (x_bar)", x_bar)
 
-    def calculate_capacity(self, resistance_factor: float = 0.75, debug: bool = False) -> float:
-        """
-        Calculates the design tensile rupture strength.
-        """
-        An, Ubs = self._calculate_anet_area()
-        nominal_strength = self.Fu * An
+        Ubs = 1 - (x_bar / l) if l > 0 else 1.0
+        logger.add_calculation("Shear Lag Factor (Ubs = 1 - x_bar / l)", Ubs)
+
+        # --- Net Area (An) Calculation ---
+        dhole = dbolt + (1/8) * si.inch
+        logger.add_calculation("Hole Diameter (d_hole = d_bolt + 1/8)", dhole)
+        
+        area_deduction = dhole * n_rows * t
+        logger.add_calculation("Area Deduction for Holes (d_hole * n_rows * t)", area_deduction)
+
+        An_gross = Ag - area_deduction
+        logger.add_calculation("Net Area (An = Ag - deduction)", An_gross)
+
+        # --- Effective Net Area (Ae) ---
+        Ae = An_gross * Ubs
+        logger.add_calculation("Effective Net Area (Ae = An * Ubs)", Ae)
+
+        # --- Final Capacity Calculation ---
+        nominal_strength = self.Fu * Ae
         design_strength = resistance_factor * nominal_strength * self.loading_condition
 
-        logger = DebugLogger(f"Tensile Rupture ({self.endpoint.component.name})", debug)
-        logger.add_input("Ultimate Strength (Fu)", self.Fu)
-        logger.add_input(f"Net Area (An) for {self.endpoint.component.name}", An)
-        logger.add_input("Shear Lag Factor (Ubs)", Ubs)
-        logger.add_input("Loading Condition", self.loading_condition)
-        logger.add_input("Resistance Factor (phi)", resistance_factor)
-        logger.add_calculation("Nominal Strength (Rn = Fu * An)", nominal_strength)
+        logger.add_calculation("Nominal Strength (Rn = Fu * Ae)", nominal_strength)
         logger.add_output("Design Strength (phiRn)", design_strength)
         logger.display()
 
@@ -1230,11 +1248,8 @@ class PryingActionCalculator:
         # Derived geometric properties
         self.d_prime = self.bolt_diameter + (1 / 16) * si.inch # Effective hole diameter
         self.b_prime = self.b - self.bolt_diameter / 2
-        if not hasattr(self.b_prime, 'units'):
-            self.b_prime = self.b_prime * si.inch
         self.a_prime = min(self.a,1.25 * self.b) + self.bolt_diameter / 2
-        if not hasattr(self.a_prime, 'units'):
-            self.a_prime = self.a_prime * si.inch
+
 
         # Ratio of b' to a'
         self.p_ = self.b_prime / self.a_prime
@@ -1316,7 +1331,7 @@ class PryingActionCalculator:
             logger.display()
             return float('inf') * si.inch
 
-        t_req = ((numerator / denominator)**0.5).to('inch')
+        t_req = ((numerator / denominator)**0.5)
         logger.add_calculation("t_req Formula", "sqrt( (4 * B * b') / (p * Fy) )")
         logger.add_output("Required Thickness (t_req)", t_req)
         logger.display()

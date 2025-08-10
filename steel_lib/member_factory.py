@@ -50,6 +50,6 @@ class MemberFactory:
         # This logic is now exclusively for external (e.g., steelpy) members.
         return GeometricProperties(
             total=total_area,
-            web=web_area if web_area > 0 else None,
-            flange=flange_area if flange_area > 0 else None
+            web=web_area if web_area else None,
+            flange=flange_area if flange_area else None
         )

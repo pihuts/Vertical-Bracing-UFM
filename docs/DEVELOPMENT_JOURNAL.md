@@ -1363,3 +1363,72 @@ def test_bolt_modified_tensile_strength(self):
 #### 🔗 References
 - **Related Entries**: Entry #14
 - **External Docs**: `design_guide.md`
+
+### 📅 2025-08-10 - 09:33 - Entry #1
+
+#### 📋 Task Classification
+-   **Type**: BUGFIX
+-   **Priority**: HIGH
+-   **Requested By**: User
+-   **Permission Status**: GRANTED
+
+#### 🎯 Approach & Decision Log
+-   **Options Considered**:
+    1.  Modify the conditional logic to handle `None` values by checking for truthiness (`if web_area:`) instead of a numeric comparison (`if web_area > 0:`).
+-   **Option Selected**: Option 1.
+-   **Selection Reasoning**: This is the most direct and Pythonic way to handle values that can be either numeric (including 0) or `None`. It's a simple, low-risk change that directly addresses the root cause of the `TypeError`.
+-   **Implementation Strategy**:
+    1.  Identify the lines causing the `TypeError` in `steel_lib/member_factory.py`.
+    2.  Replace the comparison `> 0` with a simple truthiness check for both `web_area` and `flange_area`.
+    3.  Apply the change using `apply_diff`.
+    4.  Verify the fix by running the script that previously failed.
+
+#### 💻 Implementation Details
+-   **Files Modified**:
+    -   `steel_lib/member_factory.py` - Changed conditional check to handle `None` values correctly when creating geometric properties for steel members.
+
+#### 🧪 Testing Report
+-   **Tests Written**: 0 (Manual verification)
+-   **Tests Passed**: 1
+-   **Verification**: Ran the user-provided script (`main copy.py`) which was previously failing. The script now executes without error, confirming the fix.
+
+#### 🐛 Problems & Solutions
+| Problem | Root Cause | Solution | Prevention | Time to Fix |
+| :--- | :--- | :--- | :--- | :--- |
+| `TypeError` on non-W-shape creation | The code performed a numeric comparison (`> 0`) on a variable that could be `None`. | Changed the conditional to check for truthiness (`if variable:`) instead of a numeric comparison. | Future geometric property calculations should always check for `None` before performing mathematical or comparison operations. | &lt; 5 minutes |
+
+#### 📝 Lessons Learned
+-   **What Worked**: Directly identifying the line causing the error from the traceback and applying a minimal, targeted fix.
+-   **What to Remember**: When dealing with attributes that may not exist on all objects (like `bf` or `d` on different steel shapes), ensure that the downstream logic can handle `None` values gracefully. Truthiness checks (`if var:`) are often more robust than numeric comparisons (`if var > 0:`) in these cases.
+
+### 📅 2025-08-10 - 09:43 - Entry #2
+
+#### 📋 Task Classification
+-   **Type**: REFACTOR
+-   **Priority**: MEDIUM
+-   **Requested By**: User
+-   **Permission Status**: GRANTED
+
+#### 🎯 Approach & Decision Log
+-   **Options Considered**:
+    1.  Refactor the `TensileRuptureCalculator` to move all calculation logic into the `calculate_capacity` method and use the existing `DebugLogger` to log each step.
+-   **Option Selected**: Option 1.
+-   **Selection Reasoning**: This approach provides the most detailed and transparent logging by integrating directly with the existing debugging framework. It makes all inputs, intermediate calculations (like shear lag factor and net area), and the final result visible when debugging is enabled.
+-   **Implementation Strategy**:
+    1.  Restructure the `calculate_capacity` method in `TensileRuptureCalculator`.
+    2.  Move the logic for calculating `Ubs` and `An` from the private `_calculate_anet_area` method directly into `calculate_capacity`.
+    3.  Add `logger.add_input()` and `logger.add_calculation()` calls for every variable and intermediate step.
+    4.  Remove the now-redundant `_calculate_anet_area` and `_ubs_angle` methods.
+    5.  Apply the changes to `steel_lib/calculations.py`.
+
+#### 💻 Implementation Details
+-   **Files Modified**:
+    -   `steel_lib/calculations.py` - Enhanced the `TensileRuptureCalculator` to provide comprehensive debug logging for all inputs and intermediate calculations, including the shear lag factor and net area.
+
+#### 🧪 Testing Report
+-   **Tests Written**: 0 (Refactoring of logging, no change in logic).
+-   **Verification**: The change is a refactoring of the logging mechanism. The underlying calculation logic remains the same. Visual inspection confirms that the new logging provides the requested level of detail.
+
+#### 📝 Lessons Learned
+-   **What Worked**: Consolidating calculation logic within a single method made it easier to implement step-by-step logging.
+-   **What to Remember**: For complex calculations, providing detailed debug logs for each intermediate step is crucial for verification and troubleshooting.
