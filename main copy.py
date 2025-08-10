@@ -89,7 +89,7 @@ try:
         member_b=support,
         component_a=ConnectionComponent.TOTAL,
         component_b=ConnectionComponent.TOTAL,
-        row_spacing=3.0 * si.inch,
+        row_spacing=5.50 * si.inch,
         column_spacing=3.0 * si.inch,
         n_rows=2,
         n_columns=7,
@@ -159,7 +159,12 @@ try:
     test_4_Fnt_modified = BoltShearCalculator(endpl_gusset_connection)
     test_4_Fnt_modified.calculate_capacity_fnt_modified(applied_loads.gusset_to_column_normal,debug=True) # find a better way to visualize the loads 
 
-    
+    test_4_prying = PryingActionCalculator(
+        plate=end_plate_column,
+        gusset= gusset_plate,
+        connection=endpl_gusset_connection,
+    )
+    test_4_prying.check_dcr(debug=True)
 
     print(applied_loads)
     # test_3_web_local_yield.calculate_capacity(debug=True)
