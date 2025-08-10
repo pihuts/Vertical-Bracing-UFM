@@ -11,10 +11,10 @@ MATERIALS: Dict[str, Material] = {
 }
 
 BOLT_GRADES: Dict[str, BoltGrade] = {
-    "a325_n": BoltGrade(Fnt=90.0 * si.ksi, Fnv=54.0 * si.ksi), # Threads included
-    "a325_x": BoltGrade(Fnt=90.0 * si.ksi, Fnv=68.0 * si.ksi), # Threads excluded
-    "a490_n": BoltGrade(Fnt=113.0 * si.ksi, Fnv=68.0 * si.ksi), # Threads included
-    "a490_x": BoltGrade(Fnt=113.0 * si.ksi, Fnv=84.0 * si.ksi), # Threads excluded
+    "a325_n": BoltGrade(name="A325-N", Fnt=90.0 * si.ksi, Fnv=54.0 * si.ksi), # Threads included
+    "a325_x": BoltGrade(name="A325-X", Fnt=90.0 * si.ksi, Fnv=68.0 * si.ksi), # Threads excluded
+    "a490_n": BoltGrade(name="A490-N", Fnt=113.0 * si.ksi, Fnv=68.0 * si.ksi), # Threads included
+    "a490_x": BoltGrade(name="A490-X", Fnt=113.0 * si.ksi, Fnv=84.0 * si.ksi), # Threads excluded
 }
 
 WELD_ELECTRODES: Dict[str, WeldElectrode] = {

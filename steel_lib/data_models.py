@@ -46,7 +46,7 @@ class Plate:
     length: Any = None
     width: Any = None
     clipping: Any = 0 * si.inch
-    Type: str = "Plate"
+    Type: str = "PL"
     geometry: "GeometricProperties" = field(init=False)
 
     def __post_init__(self):
@@ -116,6 +116,7 @@ class Plate:
 @dataclass(frozen=True)
 class BoltGrade:
     """Represents the nominal strength properties of a bolt material."""
+    name: str      # e.g., "A325"
     Fnt: si.ksi  # Nominal tensile stress
     Fnv: si.ksi  # Nominal shear stress
 

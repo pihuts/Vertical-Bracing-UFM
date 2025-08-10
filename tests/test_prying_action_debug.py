@@ -26,10 +26,10 @@ def design_loads():
 def ufm_multipliers():
     # These values are taken from the AISC Design Guide 29, Example 5.1
     return LoadMultipliers(
-        shear_force_column_interface=12.0/33.4,
-        shear_force_beam_interface=17.5/33.4,
-        normal_force_column=7.0/33.4,
-        normal_force_beam=10.7/33.4
+        vertical_force_column_interface=12.0/33.4,
+        vertical_force_beam_interface=17.5/33.4,
+        horizontal_force_column_interface=7.0/33.4,
+        horizontal_force_beam_interface=10.7/33.4
     )
 
 @pytest.fixture
@@ -66,7 +66,7 @@ def test_prying_action_from_design_guide(applied_loads):
     # 3. Define Bolt Configuration
     bolt_config = BoltConfiguration(
         bolt_diameter=0.875 * si.inch,
-        bolt_grade=BoltGrade(Fnt=90 * si.ksi, Fnv=68 * si.ksi),
+        bolt_grade=BoltGrade(name="A325-X", Fnt=90 * si.ksi, Fnv=68 * si.ksi),
         n_rows=7,
         n_columns=2,
         row_spacing=5.5 * si.inch,
@@ -79,26 +79,26 @@ def test_prying_action_from_design_guide(applied_loads):
 
     # 4. Define Connection
     connection = Connection(
+        member_a=end_plate,
+        member_b=gusset,
         connection_type="bolted",
-        component=ConnectionComponent.TOTAL,
         configuration=bolt_config
     )
 
     # 5. Instantiate the Calculator
     prying_calculator = PryingActionCalculator(
-        plate=end_plate,
-        gusset=gusset,
-        connection=connection,
-        loads=applied_loads
+        member_1=end_plate,
+        member_2=gusset,
+        connection=connection
     )
 
     # 6. Print debug values
     print(f"\n--- DEBUG: Prying Action ---")
     print(f"  Inputs:")
     print(f"    Required Tension per Bolt (T_req)  : {prying_calculator.tension_force / prying_calculator.n_bolts:.3f}")
-    print(f"    Plate Width (w)                    : {prying_calculator.plate.width:.3f}")
-    print(f"    Plate Thickness (t)                : {prying_calculator.plate.t:.3f}")
-    print(f"    Plate Fy                           : {prying_calculator.plate.Fy:.3f}")
+    print(f"    Plate Width (w)                    : {prying_calculator.width:.3f}")
+    print(f"    Plate Thickness (t)                : {prying_calculator.t:.3f}")
+    print(f"    Plate Fu                           : {prying_calculator.plate_Fu:.3f}")
     print(f"    Gusset Thickness                   : {prying_calculator.gusset_thickness:.3f}")
     print(f"    Bolt Diameter                      : {prying_calculator.bolt_diameter:.3f}")
     print(f"    Bolt Fnt                           : {prying_calculator.bolt_grade.Fnt:.3f}")

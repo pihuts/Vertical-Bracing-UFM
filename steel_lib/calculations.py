@@ -1342,22 +1342,32 @@ class PryingActionCalculator:
     AISC Manual Part 9.
     """
 
-    def __init__(self, plate: Plate,gusset: Plate , connection: Connection):
+    def __init__(self, member_1: Any, member_2: Any, connection: Connection):
         """
         Initializes the calculator with the plate and connection objects.
         """
         if connection.connection_type != "bolted":
             raise ValueError("PryingActionCalculator only supports bolted connections.")
+        
         self.connection = connection
-        self.plate = plate
-        self.plate_width = plate.width
-        self.plate_length = plate.length
-        self.gusset = gusset
-        self.gusset_thickness = gusset.t
         self.config: BoltConfiguration = connection.configuration
+
+        # Extract properties from the two members
+        props_1 = self._get_prying_properties(member_1)
+        props_2 = self._get_prying_properties(member_2)
+
+        # Assign properties for the main plate being analyzed
+        self.t = props_1['t']
+        self.width = props_1['width']
+        self.plate_Fu = props_1['Fu'] # Store Fu for later use
+
+        self.width_2 = props_2['width']  # Width of the plate
+
+        # Assign thickness for the supporting member (gusset)
+        
+        
         self.bolt_grade = self.config.bolt_grade
         self.bolt_diameter = self.config.bolt_diameter
-        self.t = self.plate.t  # Plate thickness
 
         # Geometric properties from the connection
         self.p = self.config.column_spacing  # Tributary length per bolt
@@ -1365,9 +1375,16 @@ class PryingActionCalculator:
         
         # Distances 'a' and 'b' as defined in AISC Manual Part 9
         # 'a' is the distance from the bolt centerline to the edge of the fitting
-        self.a = (self.plate_width - self.g) / 2
+        self.a = (min(self.width, self.width_2) - self.g) / 2
         # 'b' is the distance from the bolt centerline to the face of the supporting element
-        self.b =  (self.g - self.gusset_thickness)/2
+        self.member_type = getattr(member_1, 'Type', None)
+        
+        if self.member_type == 'PL':
+            self.t2 = props_2['t']
+            self.b =  (self.g - self.t2)/2
+        elif self.member_type == 'W':
+            self.t2 = props_1['tw']
+            self.b = (self.g - self.t2) / 2 
 
         # Derived geometric properties
         self.d_prime = self.bolt_diameter + (1 / 16) * si.inch # Effective hole diameter
@@ -1383,16 +1400,55 @@ class PryingActionCalculator:
         # Bolt properties
         self.bolt_area = (self.bolt_diameter**2 / 4) * 3.14
 
-        # Get total number of bolts 
+        # Get total number of bolts
         self.n_rows = self.config.n_rows
         self.n_columns = self.config.n_columns
         self.n_bolts = self.n_rows * self.n_columns
 
-        # This Values are hardcoded and will be updated later 
+        # This Values are hardcoded and will be updated later
         self.shear_force = 302 * si.kip
         self.tension_force = 176 * si.kip
         
         self.B = BoltShearCalculator(self.connection).calculate_capacity_fnt_modified(302 * si.kip,debug=True) * 0.75 * self.bolt_area
+
+    def _get_prying_properties(self, member: Any) -> dict:
+        """
+        Extracts properties needed for prying calculations from a generic member.
+        This acts as an adapter for different member types (Plate, W, L).
+        """
+        member_type = getattr(member, 'Type', None)
+
+        if member_type == 'PL' or isinstance(member, Plate):
+            return {
+                't': getattr(member, 't', 0),
+                'width': getattr(member, 'width', 0),
+                'Fu': getattr(member, 'Fu', 0)
+            }
+        elif member_type == 'W':
+            # Assumption: Prying action occurs on the flange.
+            return {
+                't': getattr(member, 'tf', 0),      # Flange thickness
+                'tw': getattr(member, 'tw', 0), 
+                'width': getattr(member, 'bf', 0),  # Flange width
+                'Fu': getattr(member, 'Fu', 0)
+
+            }
+        elif member_type == 'L':
+            return {
+                't': getattr(member, 't', 0),       # Leg thickness
+                'width': getattr(member, 'd', 0),   # Leg length (used as width)
+                'Fu': getattr(member, 'Fu', 0)
+            }
+        else:
+            # Fallback for unknown types or simple objects
+            # This maintains backward compatibility if a simple Plate object is passed
+            if all(hasattr(member, attr) for attr in ['t', 'width', 'Fu']):
+                return {
+                    't': member.t,
+                    'width': member.width,
+                    'Fu': member.Fu
+                }
+            raise TypeError(f"Unsupported member type for prying calculation: {type(member)}")
 
     def _calculate_alpha_prime(self, debug: bool = False) -> float:
         """
@@ -1441,13 +1497,13 @@ class PryingActionCalculator:
             logger.add_input("Available Bolt Strength (B)", self.B)
             logger.add_input("Distance b'", self.b_prime)
             logger.add_input("Tributary Length (p)", self.p)
-            logger.add_input("Plate Fu", self.plate.Fu)
+            logger.add_input("Plate Fu", self.plate_Fu)
             logger.add_input("Resistance Factor (phi)", 0.9)
 
             numerator = 4 * self.B * self.b_prime
             logger.add_calculation("Numerator (4 * B * b')", numerator)
             
-            denominator = self.p * self.plate.Fu * 0.9
+            denominator = self.p * self.plate_Fu * 0.9
             logger.add_calculation("Denominator (phi * p * Fu)", denominator)
 
             if denominator == 0:
@@ -1471,34 +1527,44 @@ class PryingActionCalculator:
             # Pass debug flag to dependent calculations
             alpha_prime = self._calculate_alpha_prime(debug=debug)
             tc = self._calculate_t_req(debug=debug)
-            
+
             logger.add_input("Plate Thickness (t)", self.t)
             logger.add_input("Required Thickness (tc)", tc)
             logger.add_input("Alpha Prime (alpha')", alpha_prime)
-            logger.add_input("Delta (delta)", self.delta)
+            logger.add_input("Rho (b'/a')", self.p_)
+            logger.add_input("Delta (1 - d'/p)", self.delta)
 
             Q = 0.0
-            if tc == 0: # Avoid division by zero
-                logger.add_calculation("Condition", "tc is zero, Q is set to a large value to indicate failure.")
+            governing_case = "Unknown"
+
+            if tc == 0:  # Avoid division by zero
+                governing_case = "tc is zero, indicates failure"
+                logger.add_calculation("Condition", governing_case)
                 Q = float('inf')
             elif alpha_prime < 0:
+                governing_case = "alpha' < 0"
                 Q = 1.0
-                logger.add_calculation("Condition: alpha' < 0", "Q is set to 1.0")
+                logger.add_calculation(f"Condition: {governing_case}", "Q is set to 1.0")
             elif 0 <= alpha_prime <= 1:
-                logger.add_calculation("Condition", "0 <= alpha_prime <= 1")
+                governing_case = "0 <= alpha_prime <= 1"
+                logger.add_calculation("Condition", governing_case)
                 ratio_sq = (self.t / tc)**2
                 logger.add_calculation("(t / tc)^2", f"({self.t:.3f} / {tc:.3f})^2 = {ratio_sq:.3f}")
                 term = (1 + (self.delta * alpha_prime))
                 logger.add_calculation("(1 + delta * alpha')", f"(1 + {self.delta:.3f} * {alpha_prime:.3f}) = {term:.3f}")
                 Q = ratio_sq * term
+                logger.add_calculation("Q Formula", "Q = (t/tc)^2 * (1 + delta * alpha')")
             elif alpha_prime > 1:
-                logger.add_calculation("Condition", "alpha_prime > 1")
+                governing_case = "alpha_prime > 1"
+                logger.add_calculation("Condition", governing_case)
                 ratio_sq = (self.t / tc)**2
                 logger.add_calculation("(t / tc)^2", f"({self.t:.3f} / {tc:.3f})^2 = {ratio_sq:.3f}")
                 term = (1 + self.delta)
                 logger.add_calculation("(1 + delta)", f"(1 + {self.delta:.3f}) = {term:.3f}")
                 Q = ratio_sq * term
-            
+                logger.add_calculation("Q Formula", "Q = (t/tc)^2 * (1 + delta)")
+
+            logger.add_output("Governing Case for Q", governing_case)
             logger.add_output("Prying Factor (Q)", Q)
             return Q
         finally:
@@ -1517,46 +1583,62 @@ class PryingActionCalculator:
         Calculates the DCR for prying action.
         DCR = (T_req) / (phi * B * Q)
         """
-        logger = DebugLogger("Prying Action", debug)
+        logger = DebugLogger("Prying Action Calculation", debug)
         try:
-            available_strength = self.calculate_bolt_tension_with_prying()
-            design_capacity = (resistance_factor * available_strength).to('kip')
-            
-            logger.add_input("Required Tension per Bolt (T_req)", self.tension_force/( self.n_bolts))
-            logger.add_input("Plate Width (w)", self.plate.width)
-            logger.add_input("Plate Thickness (t)", self.plate.t)
-            logger.add_input("Plate Fy", self.plate.Fy)
-            logger.add_input("Gusset Thickness", self.gusset_thickness)
-            logger.add_input("Bolt Diameter", self.bolt_diameter)
-            logger.add_input("Bolt Fnt", self.bolt_grade.Fnt)
+            # --- Log All Inputs ---
+            logger.add_input("--- Plate Properties ---", "")
+            logger.add_input("Plate Thickness (t)", self.t)
+            logger.add_input("Plate Width (width)", self.width)
+            logger.add_input("Plate Ultimate Strength (Fu)", self.plate_Fu)
+            logger.add_input("--- Supporting Member Properties ---", "")
+            logger.add_input("Gusset/Support Thickness", self.t2)
+            logger.add_input("--- Bolt Properties ---", "")
+            logger.add_input("Bolt Diameter (d)", self.bolt_diameter)
+            logger.add_input("Bolt Grade", self.bolt_grade.name)
+            logger.add_input("Nominal Bolt Tension (Fnt)", self.bolt_grade.Fnt)
+            logger.add_input("Number of Bolts (n_bolts)", self.n_bolts)
+            logger.add_input("--- Connection Geometry ---", "")
             logger.add_input("Tributary Length (p)", self.p)
             logger.add_input("Gage (g)", self.g)
+            logger.add_input("--- Forces ---", "")
+            logger.add_input("Total Tension Force", self.tension_force)
+            logger.add_input("Tension per Bolt (T_req)", self.tension_force / self.n_bolts)
+            logger.add_input("--- Factors ---", "")
             logger.add_input("Resistance Factor (phi)", resistance_factor)
-            
+
+            # --- Log Intermediate Calculations ---
+            logger.add_calculation("--- Derived Geometric Properties ---", "")
             logger.add_calculation("Distance 'a'", self.a)
             logger.add_calculation("Distance 'b'", self.b)
             logger.add_calculation("Effective Hole Diameter (d')", self.d_prime)
-            logger.add_calculation("b'", self.b_prime)
-            logger.add_calculation("a'", self.a_prime)
-            logger.add_calculation("Fnt Modified (Fnt_modified)", self.B)
-            logger.add_calculation("rho (b'/a')", self.p_)
-            logger.add_calculation("delta (1 - d'/p)", self.delta)
-            logger.add_calculation("Bolt Area (Ab)", self.bolt_area)
-
-            # All calculations are now called with the debug flag and log themselves.
-            # The main logger just needs to show the final results.
-            t_req = self._calculate_t_req(debug=debug)
-            logger.add_calculation("Required Thickness (t_req)", t_req)
-            Q = self.calculate_Q(debug=debug)
-            logger.add_calculation("Prying Factor (Q)", Q)
+            logger.add_calculation("Distance from bolt CL to grip (b')", self.b_prime)
+            logger.add_calculation("Effective distance 'a' (a')", self.a_prime)
+            logger.add_calculation("Ratio of b' to a' (rho)", self.p_)
+            logger.add_calculation("Ratio of unstiffened length (delta)", self.delta)
             
+            logger.add_calculation("--- Bolt Strength Calculation ---", "")
+            logger.add_calculation("Bolt Area (Ab)", self.bolt_area)
+            logger.add_calculation("Available Bolt Tensile Strength (B)", self.B)
+
+            # --- Prying Calculation (delegates logging) ---
+            t_req = self._calculate_t_req(debug=debug)
+            Q = self.calculate_Q(debug=debug)
+            
+            available_strength = self.B * Q
+            design_capacity = (resistance_factor * available_strength).to('kip')
+
+            logger.add_calculation("--- Final Capacity ---", "")
+            logger.add_calculation("Required Thickness for No Prying (t_req)", t_req)
+            logger.add_calculation("Prying Factor (Q)", Q)
             logger.add_calculation("Available Bolt Strength with Prying (B*Q)", available_strength)
             logger.add_output("Available Design Strength (phi*B*Q)", design_capacity)
-            
+
             if design_capacity == 0:
                 return float('inf')
-                
-            return self.tension_force/( self.n_bolts) / design_capacity.to('kip')
+
+            dcr = (self.tension_force / self.n_bolts) / design_capacity
+            logger.add_output("Demand/Capacity Ratio (DCR)", dcr)
+            return dcr
         finally:
             logger.display()
 

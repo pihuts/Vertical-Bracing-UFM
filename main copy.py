@@ -177,8 +177,8 @@ try:
     test_4_Fnt_modified.calculate_capacity_fnt_modified(applied_loads.gusset_to_column_normal,debug=True) # find a better way to visualize the loads 
 
     test_4_prying = PryingActionCalculator(
-        plate=end_plate_column,
-        gusset= gusset_plate,
+        member_1=end_plate_column,
+        member_2= gusset_plate,
         connection=endpl_gusset_connection,
     )
     test_4_prying.check_dcr(debug=True)
@@ -197,9 +197,14 @@ try:
     test_4_blockshear = BlockShearCalculator(endpoint = endpl_column_connection.member_a, connection=endpl_column_connection,loading_orientation="Axial")
     test_4_blockshear.calculate_capacity(debug=True)
     test_4_prying = PryingActionCalculator(
-        plate=support,
+        member_1=support,
+        member_2=end_plate_column,
+        connection=endpl_column_connection,
+    )
+    test_4_prying.check_dcr(debug=True),
 
-
+    print(support.Type)
+    print(end_plate_column.Type)
 
 
 
