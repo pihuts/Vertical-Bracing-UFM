@@ -45,8 +45,13 @@ class TestCalculations(unittest.TestCase):
             material=MATERIALS["a572_gr50"],
             clipping=3/4 * si.inch,
         )
+        # A dummy member for the other side of the bracing connection
+        self.dummy_member = Plate(t=1 * si.inch, material=MATERIALS["a572_gr50"])
+
         self.bracing_connection = ConnectionFactory.create_bolted_connection(
-            component=ConnectionComponent.TOTAL,
+            member_a=self.gusset_plate_bracing,
+            member_b=self.dummy_member, # Placeholder for the other side
+            component_a=ConnectionComponent.TOTAL,
             row_spacing=3.0 * si.inch,
             column_spacing=3.0 * si.inch,
             n_rows=2,
@@ -59,7 +64,10 @@ class TestCalculations(unittest.TestCase):
             angle=47.2 * math.pi / 180
         )
         self.column_endplate_connection = ConnectionFactory.create_bolted_connection(
-            component=ConnectionComponent.FLANGE,
+            member_a=self.end_plate_column,
+            member_b=self.support,
+            component_a=ConnectionComponent.TOTAL,
+            component_b=ConnectionComponent.FLANGE,
             row_spacing=3.0 * si.inch,
             column_spacing=3.0 * si.inch,
             n_rows=7,
@@ -81,7 +89,10 @@ class TestCalculations(unittest.TestCase):
         self.gusset_plate_bracing.set_dimensions(final_dimensions)
         self.demand_force = 840 * si.kip
         self.beam_gusset_connection = ConnectionFactory.create_welded_connection(
-            component=ConnectionComponent.LENGTH,
+            member_a=self.gusset_plate_bracing,
+            member_b=self.beam,
+            component_a=ConnectionComponent.LENGTH,
+            component_b=ConnectionComponent.WEB, # Assuming connection to web
             weld_size=0.3125 * si.inch,
             length=self.gusset_plate_bracing.length,
             electrode=WELD_ELECTRODES["e70xx"]
@@ -95,7 +106,7 @@ class TestCalculations(unittest.TestCase):
         expected_dcr = 0.87
 
         # Create Calculator and run DCR check
-        whitmore_checker = TensileYieldWhitmore(self.gusset_plate_bracing, self.bracing_connection)
+        whitmore_checker = TensileYieldWhitmore(self.bracing_connection.member_a, self.bracing_connection)
         dcr = whitmore_checker.check_dcr(demand_force=self.demand_force)
 
         # Assertion
@@ -109,7 +120,7 @@ class TestCalculations(unittest.TestCase):
         expected_dcr = 0.89
 
         # Create Calculator and run DCR check
-        buckling_checker = CompressionBucklingCalculator(self.gusset_plate_bracing, self.bracing_connection)
+        buckling_checker = CompressionBucklingCalculator(self.bracing_connection.member_a, self.bracing_connection)
         dcr = buckling_checker.check_dcr(demand_force=self.demand_force)
 
         # Assertion
@@ -125,7 +136,7 @@ class TestCalculations(unittest.TestCase):
         expected_dcr = 0.466
 
         # Create Calculator and run DCR check
-        shear_checker = ShearYieldingCalculator(self.gusset_plate_bracing, self.beam_gusset_connection)
+        shear_checker = ShearYieldingCalculator(self.beam_gusset_connection.member_a, self.beam_gusset_connection)
         dcr = shear_checker.check_dcr(demand_force=440.34 * si.kip)
 
         # Assertion
@@ -158,7 +169,7 @@ class TestCalculations(unittest.TestCase):
         expected_dcr = 0.30
 
         # Create Calculator and run DCR check
-        web_yielding_checker = WebLocalYieldingCalculator(self.beam, self.beam_gusset_connection, self.end_plate_column)
+        web_yielding_checker = WebLocalYieldingCalculator(self.beam_gusset_connection.member_b, self.beam_gusset_connection, self.end_plate_column)
         dcr = web_yielding_checker.check_dcr(demand_force=269.02 * si.kip)
 
         # Assertion
@@ -175,7 +186,7 @@ class TestCalculations(unittest.TestCase):
         expected_dcr = 0.35
 
         # Create Calculator and run DCR check
-        web_crippling_checker = WebLocalCrippingCalculator(self.beam, self.beam_gusset_connection, self.end_plate_column)
+        web_crippling_checker = WebLocalCrippingCalculator(self.beam_gusset_connection.member_b, self.beam_gusset_connection, self.end_plate_column)
         dcr = web_crippling_checker.check_dcr(demand_force=269.02 * si.kip)
 
         # Assertion
@@ -189,7 +200,9 @@ class TestCalculations(unittest.TestCase):
         # The guide uses 7/8" ASTM A325-X bolts for this check.
         # Total shear force on the interface (Vuc) is 302 kips across 14 bolts.
         connection_a325 = ConnectionFactory.create_bolted_connection(
-            component=ConnectionComponent.FLANGE,
+            member_a=self.support,
+            member_b=self.end_plate_column,
+            component_a=ConnectionComponent.FLANGE,
             row_spacing=3.0 * si.inch,
             column_spacing=3.0 * si.inch,
             n_rows=7,

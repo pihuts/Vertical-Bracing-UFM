@@ -61,8 +61,13 @@ try:
     )
 
     # --- Define Connection Configurations ---
+    # A dummy member for the other side of the bracing connection
+    dummy_member = Plate(t=1 * si.inch, material=MATERIALS["a572_gr50"])
+
     bracing_connection = ConnectionFactory.create_bolted_connection(
-        component=ConnectionComponent.TOTAL,
+        member_a=gusset_plate_bracing,
+        member_b=dummy_member,
+        component_a=ConnectionComponent.TOTAL,
         row_spacing=3.0 * si.inch,
         column_spacing=3.0 * si.inch,
         n_rows=2,
@@ -76,7 +81,9 @@ try:
     )
 
     column_endplate_connection = ConnectionFactory.create_bolted_connection(
-        component=ConnectionComponent.FLANGE,
+        member_a=end_plate_column,
+        member_b=support,
+        component_b=ConnectionComponent.FLANGE,
         row_spacing=5.5 * si.inch,
         column_spacing=3.0 * si.inch,
         n_rows=7,
@@ -88,7 +95,8 @@ try:
         material=MATERIALS["a572_gr50"],
     )
     endpl_gusset_bolted_connection = ConnectionFactory.create_bolted_connection(
-        component=ConnectionComponent.FLANGE,
+        member_a=end_plate_column,
+        member_b=gusset_plate_bracing,
         row_spacing=3.0 * si.inch,
         column_spacing=3.0 * si.inch,
         n_rows=2,
@@ -136,13 +144,18 @@ try:
 
     # Create weld connections now that gusset dimensions are known
     beam_gusset_connection = ConnectionFactory.create_welded_connection(
-        component=ConnectionComponent.LENGTH,
+        member_a=gusset_plate_bracing,
+        member_b=beam,
+        component_a=ConnectionComponent.LENGTH,
+        component_b=ConnectionComponent.WEB,
         weld_size=0.3125 * si.inch,
         length=gusset_plate_bracing.length,
         electrode=WELD_ELECTRODES["e70xx"]
     )
     endpl_gusset_connection = ConnectionFactory.create_welded_connection(
-        component=ConnectionComponent.WIDTH,
+        member_a=end_plate_column,
+        member_b=gusset_plate_bracing,
+        component_a=ConnectionComponent.WIDTH,
         weld_size=0.3125 * si.inch,
         length=gusset_plate_bracing.width,
         electrode=WELD_ELECTRODES["e70xx"]
@@ -153,13 +166,13 @@ try:
 
     # a) Whitmore Section Tensile Yielding
     print("\nCHECK: Whitmore Section Tensile Yielding...")
-    whitmore_checker = TensileYieldWhitmore(gusset_plate_bracing, bracing_connection)
+    whitmore_checker = TensileYieldWhitmore(bracing_connection.member_a, bracing_connection)
     dcr_whitmore = whitmore_checker.check_dcr(demand_force=applied_loads.initial_brace_load)
     print(f"   DCR = {dcr_whitmore:.2f} {'(OK)' if dcr_whitmore <= 1.0 else '(FAIL)'}")
 
     # b) Compression Buckling
     print("\nCHECK: Gusset Compression Buckling...")
-    comp_buckling_checker = CompressionBucklingCalculator(gusset_plate_bracing, bracing_connection)
+    comp_buckling_checker = CompressionBucklingCalculator(bracing_connection.member_a, bracing_connection)
     try:
         dcr_comp_buckling = comp_buckling_checker.check_dcr(demand_force=applied_loads.initial_brace_load)
         print(f"   DCR = {dcr_comp_buckling:.2f} {'(OK)' if dcr_comp_buckling <= 1.0 else '(FAIL)'}")
@@ -168,26 +181,26 @@ try:
 
     # c) Gusset-to-Beam Interface: Shear Yielding
     print("\nCHECK: Gusset-to-Beam Shear Yielding...")
-    gusset_beam_shear_checker = ShearYieldingCalculator(gusset_plate_bracing, beam_gusset_connection)
+    gusset_beam_shear_checker = ShearYieldingCalculator(beam_gusset_connection.member_a, beam_gusset_connection)
     dcr_gusset_beam_shear = gusset_beam_shear_checker.check_dcr(demand_force=applied_loads.gusset_to_beam_shear)
     print(f"   DCR = {dcr_gusset_beam_shear:.2f} {'(OK)' if dcr_gusset_beam_shear <= 1.0 else '(FAIL)'}")
 
     # d) Gusset-to-Beam Interface: Tensile Yielding (Normal Force)
     print("\nCHECK: Gusset-to-Beam Tensile Yielding...")
-    gusset_beam_tensile_checker = PlateTensileYieldingCalculator(gusset_plate_bracing)
+    gusset_beam_tensile_checker = PlateTensileYieldingCalculator(beam_gusset_connection.member_a)
     # Note: The capacity is calculated along the horizontal length of the plate here
     dcr_gusset_beam_tensile = gusset_beam_tensile_checker.check_dcr_horizontal(demand_force=applied_loads.gusset_to_beam_normal)
     print(f"   DCR = {dcr_gusset_beam_tensile:.2f} {'(OK)' if dcr_gusset_beam_tensile <= 1.0 else '(FAIL)'}")
 
     # e) Beam Web Local Yielding
     print("\nCHECK: Beam Web Local Yielding...")
-    web_yield_checker = WebLocalYieldingCalculator(beam, beam_gusset_connection, end_plate_column)
+    web_yield_checker = WebLocalYieldingCalculator(beam_gusset_connection.member_b, beam_gusset_connection, end_plate_column)
     dcr_web_yield = web_yield_checker.check_dcr(demand_force=applied_loads.gusset_to_beam_normal)
     print(f"   DCR = {dcr_web_yield:.2f} {'(OK)' if dcr_web_yield <= 1.0 else '(FAIL)'}")
 
     # f) Beam Web Local Crippling
     print("\nCHECK: Beam Web Local Crippling...")
-    web_crippling_checker = WebLocalCrippingCalculator(beam, beam_gusset_connection, end_plate_column)
+    web_crippling_checker = WebLocalCrippingCalculator(beam_gusset_connection.member_b, beam_gusset_connection, end_plate_column)
     dcr_web_crippling = web_crippling_checker.check_dcr(demand_force=applied_loads.gusset_to_beam_normal)
     print(f"   DCR = {dcr_web_crippling:.2f} {'(OK)' if dcr_web_crippling <= 1.0 else '(FAIL)'}")
 
@@ -216,8 +229,8 @@ try:
     asdd = PryingActionCalculator(end_plate_column, gusset_plate_bracing,column_endplate_connection)
     asdsad = asdd.check_dcr( debug=True)
 
-    asdaff = ConnectionCapacityCalculator(end_plate_column,column_endplate_connection,"Axial")
-    asdaff.calculate_capacity(debug=True)
+    asdaff = ConnectionCapacityCalculator(column_endplate_connection.member_a,column_endplate_connection,"Axial")
+    asdaff.calculate_capacity(number_of_shear_planes=1, debug=True)
 
     # print("\n\nScript finished successfully.")
 

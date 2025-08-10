@@ -220,14 +220,24 @@ class AppliedLoads:
 
 from typing import Union
 
+@dataclass(frozen=True)
+class ConnectionEndpoint:
+    """
+    Represents one side of a connection, defining which member and which specific
+    part of that member is being connected.
+    """
+    member: Any
+    component: ConnectionComponent = ConnectionComponent.TOTAL
+
 @dataclass
 class Connection:
     """
-    A unified connection class that holds the configuration for either a bolted or
-    welded connection, and critically, defines the context of the connection.
+    A unified connection class that explicitly defines the two members and their
+    respective components being joined.
     """
+    member_a: ConnectionEndpoint
+    member_b: ConnectionEndpoint
     connection_type: Literal["bolted", "welded"]
-    component: ConnectionComponent
     configuration: Union["BoltConfiguration", "WeldConfiguration"]
     override_Ag: Optional[float] = None  # Allow manual override of gross area
 
@@ -236,30 +246,49 @@ class ConnectionFactory:
     """Factory for creating Connection objects."""
 
     @staticmethod
-    def create_bolted_connection(component: ConnectionComponent, *args, **kwargs) -> Connection:
+    def create_bolted_connection(
+        member_a: Any,
+        member_b: Any,
+        component_a: ConnectionComponent = ConnectionComponent.TOTAL,
+        component_b: ConnectionComponent = ConnectionComponent.TOTAL,
+        *args, **kwargs
+    ) -> Connection:
         """
-        Creates a bolted connection, requiring the component to be specified.
+        Creates a bolted connection, explicitly defining the two members and their
+        connected components.
         """
-        # Pop override_Ag if present, as it belongs to the Connection, not BoltConfiguration
         override_ag = kwargs.pop('override_Ag', None)
-        
+        endpoint_a = ConnectionEndpoint(member=member_a, component=component_a)
+        endpoint_b = ConnectionEndpoint(member=member_b, component=component_b)
+
         return Connection(
+            member_a=endpoint_a,
+            member_b=endpoint_b,
             connection_type="bolted",
-            component=component,
             configuration=BoltConfiguration(*args, **kwargs),
             override_Ag=override_ag
         )
 
     @staticmethod
-    def create_welded_connection(component: ConnectionComponent, *args, **kwargs) -> Connection:
+    def create_welded_connection(
+        member_a: Any,
+        member_b: Any,
+        component_a: ConnectionComponent = ConnectionComponent.TOTAL,
+        component_b: ConnectionComponent = ConnectionComponent.TOTAL,
+        *args, **kwargs
+    ) -> Connection:
         """
-        Creates a welded connection, requiring the component to be specified.
+        Creates a welded connection, explicitly defining the two members and their
+        connected components.
         """
         override_ag = kwargs.pop('override_Ag', None)
+        endpoint_a = ConnectionEndpoint(member=member_a, component=component_a)
+        endpoint_b = ConnectionEndpoint(member=member_b, component=component_b)
 
         return Connection(
+            member_a=endpoint_a,
+            member_b=endpoint_b,
             connection_type="welded",
-            component=component,
             configuration=WeldConfiguration(*args, **kwargs),
             override_Ag=override_ag
         )

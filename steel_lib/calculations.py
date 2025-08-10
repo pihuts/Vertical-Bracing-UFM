@@ -18,18 +18,17 @@ from .debugging import DebugLogger
 Numeric = Union[int, float]
 
 
-def get_applicable_gross_area(member: Any, connection: Connection) -> float:
+def get_applicable_gross_area(endpoint: "ConnectionEndpoint", connection: Connection) -> float:
     """
-    Determines the applicable gross area (Ag) based on the connection context.
+    Determines the applicable gross area (Ag) based on the connection endpoint.
 
     This function acts as the single source of truth for area selection. It prioritizes
-    a manual override from the connection object, otherwise it uses the connection's
-    specified component to look up the pre-calculated area from the member's
-    geometry.
+    a manual override from the main connection object, otherwise it uses the endpoint's
+    specified component to look up the pre-calculated area from the member's geometry.
 
     Args:
-        member (Any): The enriched member object, which must have a `.geometry` attribute.
-        connection (Connection): The connection object, which provides the context.
+        endpoint (ConnectionEndpoint): The specific connection endpoint to analyze.
+        connection (Connection): The parent connection object for context (e.g., override_Ag).
 
     Returns:
         float: The applicable gross area for the calculation.
@@ -40,16 +39,17 @@ def get_applicable_gross_area(member: Any, connection: Connection) -> float:
         ValueError: If the specified connection component does not have a corresponding
                     area in the member's geometry.
     """
-    # 1. Prioritize the manual override if it exists
+    # 1. Prioritize the manual override from the parent connection
     if connection.override_Ag is not None:
         return connection.override_Ag
 
+    member = endpoint.member
     # 2. Check for the mandatory geometry attribute on the member
     if not hasattr(member, 'geometry'):
         raise AttributeError("The provided 'member' object must be enriched with a '.geometry' attribute.")
 
     # 3. Look up the area based on the connection component
-    component_name = connection.component.value
+    component_name = endpoint.component.value
     applicable_area = getattr(member.geometry, component_name, None)
 
     if applicable_area is None:
@@ -61,15 +61,14 @@ def get_applicable_gross_area(member: Any, connection: Connection) -> float:
     return applicable_area
 
 
-def get_applicable_thickness(member: Any, connection: Connection) -> float:
+def get_applicable_thickness(endpoint: "ConnectionEndpoint") -> float:
     """
-    Determines the applicable thickness based on the connection context.
+    Determines the applicable thickness based on the connection endpoint.
     This ensures that calculations like net area are based on the correct
     thickness for the connected part (e.g., web vs. flange).
 
     Args:
-        member (Any): The enriched member object.
-        connection (Connection): The connection object providing context.
+        endpoint (ConnectionEndpoint): The specific connection endpoint to analyze.
 
     Returns:
         float: The applicable thickness for the calculation.
@@ -78,7 +77,8 @@ def get_applicable_thickness(member: Any, connection: Connection) -> float:
         AttributeError: If the member lacks the required thickness attribute
                         (e.g., 'tw' for a web connection).
     """
-    component = connection.component
+    member = endpoint.member
+    component = endpoint.component
     thickness = 0.0
 
     if component == ConnectionComponent.WEB:
@@ -255,17 +255,17 @@ class BoltShearCalculator:
         final_fnt_modified
         
         logger.display()
-        design_strength = resistance_factor * final_fnt_modified * self.bolt_area 
-        return design_strength 
+        return final_fnt_modified
 class TensileYieldingCalculator:
     """
     Calculates the tensile yielding capacity of a member.
     """
-    def __init__(self, member: Any, connection: Connection):
-        self.member = member
+    def __init__(self, endpoint: "ConnectionEndpoint", connection: Connection):
+        self.endpoint = endpoint
+        self.member = endpoint.member
         self.connection = connection
         self.Fy = self.member.Fy
-        self.Ag = get_applicable_gross_area(member, connection)
+        self.Ag = get_applicable_gross_area(endpoint, connection)
         self.loading_condition = getattr(self.member, 'loading_condition', 1)
 
     def calculate_capacity(self, resistance_factor: float = 0.9, debug: bool = False) -> float:
@@ -275,9 +275,9 @@ class TensileYieldingCalculator:
         nominal_strength = self.Fy * self.Ag
         design_strength = resistance_factor * nominal_strength * self.loading_condition
 
-        logger = DebugLogger(f"Tensile Yielding ({self.connection.component.name})", debug)
+        logger = DebugLogger(f"Tensile Yielding ({self.endpoint.component.name})", debug)
         logger.add_input("Yield Strength (Fy)", self.Fy)
-        logger.add_input(f"Applicable Gross Area (Ag) for {self.connection.component.name}", self.Ag)
+        logger.add_input(f"Applicable Gross Area (Ag) for {self.endpoint.component.name}", self.Ag)
         logger.add_input("Loading Condition", self.loading_condition)
         logger.add_input("Resistance Factor (phi)", resistance_factor)
         logger.add_calculation("Nominal Strength (Rn = Fy * Ag)", nominal_strength)
@@ -296,8 +296,9 @@ class TensileRuptureCalculator:
     """
     Calculates the tensile rupture capacity of a member.
     """
-    def __init__(self, member: Any, connection: Connection):
-        self.member = member
+    def __init__(self, endpoint: "ConnectionEndpoint", connection: Connection):
+        self.endpoint = endpoint
+        self.member = endpoint.member
         self.connection = connection
         self.bolt_config = connection.configuration
         self.Fu = self.member.Fu
@@ -307,7 +308,7 @@ class TensileRuptureCalculator:
         return 1 - x_bar / l
 
     def _calculate_anet_area(self):
-        t = get_applicable_thickness(self.member, self.connection)
+        t = get_applicable_thickness(self.endpoint)
         S_c = self.bolt_config.column_spacing
         N_c = self.bolt_config.n_columns
         dbolt = self.bolt_config.bolt_diameter
@@ -316,11 +317,11 @@ class TensileRuptureCalculator:
         # For a W-section's web or flange, or other symmetric connections, x_bar is 0.
         # It is non-zero for asymmetric sections like angles.
         x_bar = 0
-        if self.connection.component == ConnectionComponent.TOTAL and hasattr(self.member, 'x'):
+        if self.endpoint.component == ConnectionComponent.TOTAL and hasattr(self.member, 'x'):
             x_bar = self.member.x
         
         Ubs = self._ubs_angle(x_bar=x_bar, l=l)
-        Ag = get_applicable_gross_area(self.member, self.connection)
+        Ag = get_applicable_gross_area(self.endpoint, self.connection)
         dhole = dbolt + (1/8) * si.inch
         An = Ag - dhole * self.bolt_config.n_rows * t
         return An * Ubs, Ubs
@@ -333,9 +334,9 @@ class TensileRuptureCalculator:
         nominal_strength = self.Fu * An
         design_strength = resistance_factor * nominal_strength * self.loading_condition
 
-        logger = DebugLogger(f"Tensile Rupture ({self.connection.component.name})", debug)
+        logger = DebugLogger(f"Tensile Rupture ({self.endpoint.component.name})", debug)
         logger.add_input("Ultimate Strength (Fu)", self.Fu)
-        logger.add_input(f"Net Area (An) for {self.connection.component.name}", An)
+        logger.add_input(f"Net Area (An) for {self.endpoint.component.name}", An)
         logger.add_input("Shear Lag Factor (Ubs)", Ubs)
         logger.add_input("Loading Condition", self.loading_condition)
         logger.add_input("Resistance Factor (phi)", resistance_factor)
@@ -360,19 +361,20 @@ class BlockShearCalculator:
     """
     def __init__(
         self,
-        member: MemberType,
+        endpoint: "ConnectionEndpoint",
         connection: Connection,
         loading_orientation: LoadingOrientation,
         loading_condition: int = 1,
         thickness: float = None,
     ):
-        self.member = member
+        self.endpoint = endpoint
+        self.member = endpoint.member
         self.bolt_config: BoltConfiguration = connection.configuration
         self.loading_orientation = loading_orientation
         self.loading_condition = loading_condition
 
         # CORRECTED: _get_member_thickness now always returns a unit-aware value
-        self.thickness = thickness if thickness is not None else get_applicable_thickness(member, connection)
+        self.thickness = thickness if thickness is not None else get_applicable_thickness(endpoint)
         self.bolt_hole_diameter = self.bolt_config.bolt_diameter + (1/8) * si.inch
 
         if self.loading_orientation == "Shear" or self.member.Type == "L":
@@ -456,14 +458,16 @@ class ConnectionCapacityCalculator:
     Calculates the governing bolt capacity for an entire connection, considering
     bolt shear and bolt bearing/tearout for inner and outer bolts.
     """
-    def __init__(self, member: Any, connection: Connection, loading_orientation: Literal["Axial", "Shear"]):
-        self.member = member
+    def __init__(self, endpoint: "ConnectionEndpoint", connection: Connection, loading_orientation: Literal["Axial", "Shear"]):
+        self.endpoint = endpoint
+        self.connection = connection
+        self.member = endpoint.member
         self.bolt_config: BoltConfiguration = connection.configuration
         self.loading_orientation = loading_orientation
 
         # Extract common properties
         self.Fu = self.member.Fu
-        self.thickness = get_applicable_thickness(member, connection)
+        self.thickness = get_applicable_thickness(endpoint)
         self.bolt_diameter = self.bolt_config.bolt_diameter
         self.bolt_diameter_nominal = self.bolt_config.bolt_diameter + (1/16) * si.inch
 
@@ -502,7 +506,7 @@ class ConnectionCapacityCalculator:
         """
         # 1. Get the shear capacity of a single bolt (this is an upper limit)
         # Create a new Connection object to pass to the shear checker
-        shear_checker = BoltShearCalculator(self.bolt_config)
+        shear_checker = BoltShearCalculator(self.connection)
         bolt_shear_strength = shear_checker.calculate_capacity_fnv(number_of_shear_planes, resistance_factor=0.75) # Use nominal for comparison
 
         # 2. Calculate clear distances
@@ -564,9 +568,10 @@ class TensileYieldWhitmore:
     Calculates the tensile yielding capacity based on the Whitmore section.
     """
 
-    def __init__(self, member: Any, connection: Connection):
+    def __init__(self, endpoint: "ConnectionEndpoint", connection: Connection):
         """Initializes the calculator with the member and connection objects."""
-        self.member = member
+        self.endpoint = endpoint
+        self.member = endpoint.member
         self.bolt_config: BoltConfiguration = connection.configuration
         self.Fy = self.member.Fy
         self.loading_condition = getattr(self.member, "loading_condition", 1)
@@ -639,9 +644,10 @@ class CompressionBucklingCalculator:
     Calculates the compression buckling capacity of a member.
     """
 
-    def __init__(self, member: Any, connection: Connection):
+    def __init__(self, endpoint: "ConnectionEndpoint", connection: Connection):
         """Initializes the calculator with the member and connection."""
-        self.member = member
+        self.endpoint = endpoint
+        self.member = endpoint.member
         self.bolt_config: BoltConfiguration = connection.configuration
         self.Fy = self.member.Fy
         self.t = self._get_member_thickness()
@@ -842,10 +848,11 @@ class PlateTensileYieldingCalculator:
     '.dimensions' attribute containing a PlateDimensions object.
     """
 
-    def __init__(self, member: Any):
+    def __init__(self, endpoint: "ConnectionEndpoint"):
         """
-        Initializes the calculator by extracting required data from the member object.
+        Initializes the calculator by extracting required data from the endpoint's member object.
         """
+        member = endpoint.member
         if not all(hasattr(member, attr) for attr in ['length', 'width', 't']):
             raise AttributeError(
                 "The provided Plate object must have 'length', 'width', and 't' attributes."
@@ -923,13 +930,13 @@ class WebLocalYieldingCalculator:
     with a clear separation between input and calculation debugging.
     """
 
-    def __init__(self, member: Any, connection: Connection, end_plate: Plate):
+    def __init__(self, endpoint: "ConnectionEndpoint", connection: Connection, end_plate: Plate):
         """
         Initializes the calculator by extracting all necessary primitive values.
         The end_plate thickness is now derived directly from the end_plate object.
         """
         config: WeldConfiguration = connection.configuration
-
+        member = endpoint.member
         self._Fy = member.Fy
         self._tw = self._get_attribute(member, ["tw"])
         self._k = self._get_attribute(member, ["k", "k_det"])
@@ -1000,13 +1007,13 @@ class WebLocalCrippingCalculator:
     with a clear separation between input and calculation debugging.
     """
 
-    def __init__(self, member: Any, connection: Connection, end_plate: Plate):
+    def __init__(self, endpoint: "ConnectionEndpoint", connection: Connection, end_plate: Plate):
         """
         Initializes the calculator by extracting all necessary primitive values.
         The end_plate thickness is now derived directly from the end_plate object.
         """
         config: WeldConfiguration = connection.configuration
-
+        member = endpoint.member
         self._Fy = member.Fy
         self._tw = self._get_attribute(member, ["tw"])
         self._k = self._get_attribute(member, ["k", "k_det"])
@@ -1123,8 +1130,9 @@ class ShearYieldingCalculator:
     This class is designed to handle both L and U patterns for block shear calculations.
     """
 
-    def __init__(self, member: Any, connection: Connection):
-        self.member = member
+    def __init__(self, endpoint: "ConnectionEndpoint", connection: Connection):
+        self.endpoint = endpoint
+        self.member = endpoint.member
         self.connection = connection # Keep the full connection for context
         self.config: Union[BoltConfiguration, WeldConfiguration] = connection.configuration
         self.connection_type = connection.connection_type
@@ -1155,9 +1163,9 @@ class ShearYieldingCalculator:
         """
         Calculates the design shear yielding strength (phiRn).
         """
-        logger = DebugLogger(f"Shear Yielding ({self.connection.component.name})", debug)
+        logger = DebugLogger(f"Shear Yielding ({self.endpoint.component.name})", debug)
         
-        gross_area = get_applicable_gross_area(self.member, self.connection)
+        gross_area = get_applicable_gross_area(self.endpoint, self.connection)
         loading_condition = getattr(self.member, "loading_condition", 1)
         
         logger.add_input("Member Type", getattr(self.member, "Type", "N/A"))
@@ -1165,7 +1173,7 @@ class ShearYieldingCalculator:
         logger.add_input("Yield Strength (Fy)", self.Fy)
         logger.add_input("Ultimate Strength (Fu)", self.Fu)
         logger.add_input("Member Thickness (t)", self.thickness)
-        logger.add_input(f"Applicable Gross Area (Ag) for {self.connection.component.name}", gross_area)
+        logger.add_input(f"Applicable Gross Area (Ag) for {self.endpoint.component.name}", gross_area)
         logger.add_input("Loading Condition (Informational)", loading_condition)
         logger.add_input("Resistance Factor (phi)", resistance_factor)
 
@@ -1222,7 +1230,11 @@ class PryingActionCalculator:
         # Derived geometric properties
         self.d_prime = self.bolt_diameter + (1 / 16) * si.inch # Effective hole diameter
         self.b_prime = self.b - self.bolt_diameter / 2
+        if not hasattr(self.b_prime, 'units'):
+            self.b_prime = self.b_prime * si.inch
         self.a_prime = min(self.a,1.25 * self.b) + self.bolt_diameter / 2
+        if not hasattr(self.a_prime, 'units'):
+            self.a_prime = self.a_prime * si.inch
 
         # Ratio of b' to a'
         self.p_ = self.b_prime / self.a_prime
