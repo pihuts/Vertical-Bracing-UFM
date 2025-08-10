@@ -740,9 +740,9 @@ class UFMCalculator:
         self._beam_depth = self._get_attribute(beam, ["d", "depth"])
         self._support_depth = self._get_attribute(support, ["d", "depth"])
         self._end_plate_thickness = self._get_attribute(endplate, ["t", "thickness"])
-        self._edge_dist = config.edge_distance_vertical
-        self._row_spacing = config.row_spacing
-        self._n_rows = config.n_rows
+        self._edge_dist = config.edge_distance_horizontal
+        self._col_spacing = config.column_spacing
+        self._n_col = config.n_columns
         self._angle_rad = config.angle
 
     def _get_attribute(self, obj: Any, potential_names: list[str]) -> float:
@@ -769,7 +769,7 @@ class UFMCalculator:
 
     @property
     def _beta(self) -> float:
-        return self._edge_dist + ((self._n_rows - 1) * self._row_spacing) / 2
+        return self._edge_dist + ((self._n_col - 1) * self._col_spacing) / 2
 
     @property
     def _alpha(self) -> float:
@@ -797,8 +797,8 @@ class UFMCalculator:
         logger.add_input("Support Depth", self._support_depth)
         logger.add_input("End Plate Thickness", self._end_plate_thickness)
         logger.add_input("Edge Distance (vert)", self._edge_dist)
-        logger.add_input("Row Spacing", self._row_spacing)
-        logger.add_input("Number of Rows", self._n_rows)
+        logger.add_input("Row Spacing", self._col_spacing)
+        logger.add_input("Number of Rows", self._n_col)
         logger.add_input("Connection Angle", f"{math.degrees(self._angle_rad):.2f} degrees")
 
         logger.add_calculation("_beta", self._beta)
@@ -807,7 +807,7 @@ class UFMCalculator:
 
         unrounded_vertical = (
             self._edge_dist * 2
-            + ((self._n_rows - 1) * self._row_spacing)
+            + ((self._n_col - 1) * self._col_spacing)
             + 0.5 * si.inch
         )
         logger.add_calculation("Vertical Plate Length (unrounded)", unrounded_vertical)
@@ -835,8 +835,8 @@ class UFMCalculator:
         logger.add_input("Beam Depth", self._beam_depth)
         logger.add_input("Support Depth", self._support_depth)
         logger.add_input("Edge Distance (vert)", self._edge_dist)
-        logger.add_input("Row Spacing", self._row_spacing)
-        logger.add_input("Number of Rows", self._n_rows)
+        logger.add_input("Row Spacing", self._col_spacing)
+        logger.add_input("Number of Rows", self._n_col)
         logger.add_input("Connection Angle", f"{math.degrees(self._angle_rad):.2f} degrees")
 
         logger.add_calculation("_beta", self._beta)
@@ -844,16 +844,16 @@ class UFMCalculator:
         logger.add_calculation("_r", self._r)
 
         multipliers = LoadMultipliers(
-            shear_force_column_interface=self._beta / self._r,
-            shear_force_beam_interface=self._alpha / self._r,
-            normal_force_column=self._support_half_depth / self._r,
-            normal_force_beam=self._beam_half_depth / self._r,
+            vertical_force_column_interface=self._beta / self._r,
+            vertical_force_beam_interface=self._beam_half_depth / self._r,
+            horizontal_force_column_interface=self._support_half_depth / self._r,
+            horizontal_force_beam_interface=self._alpha / self._r,
         )
 
-        logger.add_output("Shear Force (Column Interface)", multipliers.shear_force_column_interface)
-        logger.add_output("Shear Force (Beam Interface)", multipliers.shear_force_beam_interface)
-        logger.add_output("Normal Force (Column)", multipliers.normal_force_column)
-        logger.add_output("Normal Force (Beam)", multipliers.normal_force_beam)
+        logger.add_output("Shear Force (Column Interface)", multipliers.vertical_force_column_interface)
+        logger.add_output("Shear Force (Beam Interface)", multipliers.vertical_force_beam_interface)
+        logger.add_output("Normal Force (Column)", multipliers.horizontal_force_column_interface)
+        logger.add_output("Normal Force (Beam)", multipliers.horizontal_force_beam_interface)
         logger.display()
 
         return multipliers

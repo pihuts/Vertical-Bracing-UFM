@@ -161,8 +161,8 @@ class PlateDimensions:
 
 @dataclass(frozen=True)
 class LoadMultipliers:
-    shear_force_column_interface: float; shear_force_beam_interface: float
-    normal_force_column: float; normal_force_beam: float
+    vertical_force_column_interface: float; vertical_force_beam_interface: float
+    horizontal_force_column_interface: float; horizontal_force_beam_interface: float
 
 @dataclass(frozen=True)
 class DesignLoads:
@@ -199,14 +199,14 @@ class AppliedLoads:
         Uniform Force Method calculations.
         """
         # Perform the load distribution calculations here
-        vuc = multipliers.shear_force_column_interface * design_loads.Pu
-        huc = multipliers.normal_force_column * design_loads.Pu
-        hub = multipliers.shear_force_beam_interface * design_loads.Pu
-        vub = multipliers.normal_force_beam * design_loads.Pu
-
+        vuc = multipliers.vertical_force_column_interface * design_loads.Pu
+        vub = multipliers.vertical_force_beam_interface * design_loads.Pu
+        huc = multipliers.horizontal_force_column_interface * design_loads.Pu
+        hub = multipliers.horizontal_force_beam_interface * design_loads.Pu
+        
         # Add Aub and Vu to the column interface forces
-        total_column_shear = vuc + design_loads.Vu
-        total_column_normal = huc + design_loads.Aub
+        total_column_shear = huc + design_loads.Vu
+        total_column_normal = vuc + design_loads.Aub
 
         return cls(
             initial_brace_load=design_loads.Pu,
