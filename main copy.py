@@ -56,7 +56,7 @@ try:
 
     # End Plate for Column Connection
     end_plate_column = Plate(
-        t=1 * si.inch,
+        t=5/8 * si.inch,
         material=MATERIALS["a572_gr50"],
         width=10 * si.inch,
     )
@@ -167,6 +167,7 @@ try:
     test_4_prying.check_dcr(debug=True)
 
     print(applied_loads)
+    # print(BoltShearCalculator(endpl_gusset_connection).calculate_capacity_fnt_modified(302 * si.kip,debug=True)* 0.601 *si.inch**2)   # Example of how to use the modified shear capacity
     # test_3_web_local_yield.calculate_capacity(debug=True)
 
 

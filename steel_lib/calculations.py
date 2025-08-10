@@ -1277,7 +1277,7 @@ class PryingActionCalculator:
         self.delta = 1 - (self.d_prime / self.p)
         
         # Bolt properties
-        self.bolt_area = (self.bolt_diameter**2 / 4) * math.pi
+        self.bolt_area = (self.bolt_diameter**2 / 4) * 3.14
 
         # Get total number of bolts 
         self.n_rows = self.config.n_rows
@@ -1288,7 +1288,7 @@ class PryingActionCalculator:
         self.shear_force = 302 * si.kip
         self.tension_force = 176 * si.kip
         
-        self.B = BoltShearCalculator(self.connection).calculate_capacity_fnt_modified(302 * si.kip,debug=True)
+        self.B = BoltShearCalculator(self.connection).calculate_capacity_fnt_modified(302 * si.kip,debug=True) * 0.75 * self.bolt_area
 
     def _calculate_alpha_prime(self, debug: bool = False) -> float:
         """
@@ -1334,22 +1334,23 @@ class PryingActionCalculator:
         """
         logger = DebugLogger("Required Thickness (t_req) Calculation", debug)
         try:
-            numerator = 4 * self.B * self.b_prime
-            denominator = self.p * self.plate.Fu * 0.9
-            
             logger.add_input("Available Bolt Strength (B)", self.B)
             logger.add_input("Distance b'", self.b_prime)
             logger.add_input("Tributary Length (p)", self.p)
             logger.add_input("Plate Fu", self.plate.Fu)
-            
+            logger.add_input("Resistance Factor (phi)", 0.9)
+
+            numerator = 4 * self.B * self.b_prime
             logger.add_calculation("Numerator (4 * B * b')", numerator)
-            logger.add_calculation("Denominator (p * Fy)", denominator)
+            
+            denominator = self.p * self.plate.Fu * 0.9
+            logger.add_calculation("Denominator (phi * p * Fu)", denominator)
 
             if denominator == 0:
                 logger.add_calculation("Condition", "Denominator is zero, returning infinity.")
                 return float('inf') * si.inch
 
-            t_req = ((numerator / denominator)**0.5)
+            t_req = ((numerator / denominator)**0.5).to('inch')
             logger.add_calculation("t_req Formula", "sqrt( (4 * B * b') / (p * Fy) )")
             logger.add_output("Required Thickness (t_req)", t_req)
             return t_req
@@ -1380,19 +1381,19 @@ class PryingActionCalculator:
                 Q = 1.0
                 logger.add_calculation("Condition: alpha' < 0", "Q is set to 1.0")
             elif 0 <= alpha_prime <= 1:
+                logger.add_calculation("Condition", "0 <= alpha_prime <= 1")
                 ratio_sq = (self.t / tc)**2
+                logger.add_calculation("(t / tc)^2", f"({self.t:.3f} / {tc:.3f})^2 = {ratio_sq:.3f}")
                 term = (1 + (self.delta * alpha_prime))
+                logger.add_calculation("(1 + delta * alpha')", f"(1 + {self.delta:.3f} * {alpha_prime:.3f}) = {term:.3f}")
                 Q = ratio_sq * term
-                logger.add_calculation("Thickness Ratio Squared (t/tc)^2", ratio_sq)
-                logger.add_calculation("Term (1 + delta*alpha')", term)
-                logger.add_calculation("Condition: 0 <= alpha' <= 1", f"Q = {ratio_sq:.3f} * {term:.3f}")
             elif alpha_prime > 1:
+                logger.add_calculation("Condition", "alpha_prime > 1")
                 ratio_sq = (self.t / tc)**2
+                logger.add_calculation("(t / tc)^2", f"({self.t:.3f} / {tc:.3f})^2 = {ratio_sq:.3f}")
                 term = (1 + self.delta)
+                logger.add_calculation("(1 + delta)", f"(1 + {self.delta:.3f}) = {term:.3f}")
                 Q = ratio_sq * term
-                logger.add_calculation("Thickness Ratio Squared (t/tc)^2", ratio_sq)
-                logger.add_calculation("Term (1 + delta)", term)
-                logger.add_calculation("Condition: alpha' > 1", f"Q = {ratio_sq:.3f} * {term:.3f}")
             
             logger.add_output("Prying Factor (Q)", Q)
             return Q
@@ -1407,7 +1408,7 @@ class PryingActionCalculator:
         Q = self.calculate_Q(debug=False) # Debugging is handled in the main check_dcr
         return self.B * Q
 
-    def check_dcr(self,resistance_factor: float = 0.75, debug: bool = False) -> float:
+    def check_dcr(self,resistance_factor: float = 1, debug: bool = False) -> float:
         """
         Calculates the DCR for prying action.
         DCR = (T_req) / (phi * B * Q)
@@ -1443,6 +1444,7 @@ class PryingActionCalculator:
             t_req = self._calculate_t_req(debug=debug)
             logger.add_calculation("Required Thickness (t_req)", t_req)
             Q = self.calculate_Q(debug=debug)
+            logger.add_calculation("Prying Factor (Q)", Q)
             
             logger.add_calculation("Available Bolt Strength with Prying (B*Q)", available_strength)
             logger.add_output("Available Design Strength (phi*B*Q)", design_capacity)
