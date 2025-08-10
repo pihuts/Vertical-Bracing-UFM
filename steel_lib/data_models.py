@@ -205,8 +205,10 @@ class AppliedLoads:
         hub = multipliers.horizontal_force_beam_interface * design_loads.Pu
         
         # Add Aub and Vu to the column interface forces
-        total_column_shear = huc + design_loads.Vu
-        total_column_normal = vuc + design_loads.Aub
+        # total_column_shear = huc + design_loads.Vu
+        # total_column_normal = vuc + design_loads.Aub
+        total_column_shear = huc 
+        total_column_normal = vuc 
 
         return cls(
             initial_brace_load=design_loads.Pu,

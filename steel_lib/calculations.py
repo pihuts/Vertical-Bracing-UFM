@@ -1066,7 +1066,7 @@ class WebLocalCrippingCalculator:
         for name in potential_names:
             if hasattr(obj, name):
                 value = getattr(obj, name)
-                return value if hasattr(value, "units") else value * si.inch
+                return value if hasattr(value, "units") else value 
         raise AttributeError(
             f"Object does not have any of the expected attributes: {potential_names}"
         )
@@ -1076,84 +1076,86 @@ class WebLocalCrippingCalculator:
         Calculates the design web local crippling strength (phiRn) based on AISC J10.3.
         """
         logger = DebugLogger("Web Local Crippling", debug)
-        logger.add_input("Yield Strength (Fy)", self._Fy)
-        logger.add_input("Web Thickness (tw)", self._tw)
-        logger.add_input("Flange Thickness (tf)", self._tf)
-        logger.add_input("Modulus of Elasticity (E)", self._E)
-        logger.add_input("Member Depth (d)", self._d)
-        logger.add_input("Connection Length (lb)", self._connection_length)
-        logger.add_input("End Plate Thickness (tpl)", self._end_plate_thickness)
-        logger.add_input("Resistance Factor (phi)", resistance_factor)
-        logger.add_input("Loading Condition", self._loading_condition)
+        try:
+            logger.add_input("Yield Strength (Fy)", self._Fy)
+            logger.add_input("Web Thickness (tw)", self._tw)
+            logger.add_input("Flange Thickness (tf)", self._tf)
+            logger.add_input("Modulus of Elasticity (E)", self._E)
+            logger.add_input("Member Depth (d)", self._d)
+            logger.add_input("Connection Length (lb)", self._connection_length)
+            logger.add_input("End Plate Thickness (tpl)", self._end_plate_thickness)
+            logger.add_input("Resistance Factor (phi)", resistance_factor)
+            logger.add_input("Loading Condition", self._loading_condition)
 
-        # Common term in AISC J10.3 equations
-        ef_term = ((self._E * self._Fy * self._tf) / self._tw) ** 0.5
-        ef_term = ef_term.to('ksi')
-        logger.add_calculation("EF Term ((E*Fy*tf)/tw)^0.5", ef_term)
+            # Common term in AISC J10.3 equations
+            ef_term = ((self._E * self._Fy * self._tf) / self._tw) ** 0.5
+            ef_term = ef_term.to('ksi')
+            logger.add_calculation("EF Term ((E*Fy*tf)/tw)^0.5", ef_term)
 
-        # Determine which case of J10.3 applies
-        clip_dist = 3 / 4 * si.inch
-        connection_load_centroid = (
-            self._connection_length / 2 + clip_dist + self._end_plate_thickness
-        )
-        logger.add_calculation("Connection Load Centroid", connection_load_centroid)
-
-        # Ratio of bearing length to member depth
-        lb_d_ratio = self._connection_length / self._d
-        logger.add_calculation(
-            "Bearing Length to Depth Ratio (lb/d)", lb_d_ratio
-        )
-
-        # Ratio of web thickness to flange thickness
-        tw_tf_ratio = self._tw / self._tf
-        logger.add_calculation(
-            "Web to Flange Thickness Ratio (tw/tf)", tw_tf_ratio
-        )
-
-        nominal_capacity = 0.0
-
-        # Case 1: Load is applied at a distance from the member end >= d
-        if connection_load_centroid >= self._d/2:
-            formula_part = 1 + 3 * (lb_d_ratio) * (tw_tf_ratio**1.5)
-            nominal_capacity = 0.80 * self._tw**2 * formula_part * ef_term
-            logger.add_calculation(
-                "Formula Part (1 + 3*(lb/d)*(tw/tf)^1.5)", formula_part
+            # Determine which case of J10.3 applies
+            clip_dist = 3 / 4 * si.inch
+            connection_load_centroid = (
+                self._connection_length / 2 + clip_dist + self._end_plate_thickness
             )
+            logger.add_calculation("Connection Load Centroid", connection_load_centroid)
+
+            # Ratio of bearing length to member depth
+            lb_d_ratio = self._connection_length / self._d
             logger.add_calculation(
-                "Nominal Capacity (Rn) - Eq. J10-4", nominal_capacity
+                "Bearing Length to Depth Ratio (lb/d)", lb_d_ratio
             )
 
-        # Case 2: Load is applied at a distance from the member end < d
-        else:
-            # Subcase a: lb/d <= 0.2
-            if lb_d_ratio <= 0.2:
+            # Ratio of web thickness to flange thickness
+            tw_tf_ratio = self._tw / self._tf
+            logger.add_calculation(
+                "Web to Flange Thickness Ratio (tw/tf)", tw_tf_ratio
+            )
+
+            nominal_capacity = 0.0
+
+            # Case 1: Load is applied at a distance from the member end >= d
+            if connection_load_centroid >= self._d/2:
                 formula_part = 1 + 3 * (lb_d_ratio) * (tw_tf_ratio**1.5)
-                nominal_capacity = 0.40 * self._tw**2 * formula_part * ef_term
+                nominal_capacity = 0.80 * self._tw**2 * formula_part * ef_term
                 logger.add_calculation(
                     "Formula Part (1 + 3*(lb/d)*(tw/tf)^1.5)", formula_part
                 )
                 logger.add_calculation(
-                    "Nominal Capacity (Rn) - Eq. J10-5a", nominal_capacity
+                    "Nominal Capacity (Rn) - Eq. J10-4", nominal_capacity
                 )
-            # Subcase b: lb/d > 0.2
+
+            # Case 2: Load is applied at a distance from the member end < d
             else:
-                formula_part = 1 + (4 * lb_d_ratio - 0.2) * (tw_tf_ratio**1.5)
-                nominal_capacity = 0.40 * self._tw**2 * formula_part * ef_term
-                logger.add_calculation(
-                    "Formula Part (1 + (4*lb/d - 0.2)*(tw/tf)^1.5)",
-                    formula_part,
-                )
-                logger.add_calculation(
-                    "Nominal Capacity (Rn) - Eq. J10-5b", nominal_capacity
-                )
+                # Subcase a: lb/d <= 0.2
+                if lb_d_ratio <= 0.2:
+                    formula_part = 1 + 3 * (lb_d_ratio) * (tw_tf_ratio**1.5)
+                    nominal_capacity = 0.40 * self._tw**2 * formula_part * ef_term
+                    logger.add_calculation(
+                        "Formula Part (1 + 3*(lb/d)*(tw/tf)^1.5)", formula_part
+                    )
+                    logger.add_calculation(
+                        "Nominal Capacity (Rn) - Eq. J10-5a", nominal_capacity
+                    )
+                # Subcase b: lb/d > 0.2
+                else:
+                    formula_part = 1 + (4 * lb_d_ratio - 0.2) * (tw_tf_ratio**1.5)
+                    nominal_capacity = 0.40 * self._tw**2 * formula_part * ef_term
+                    logger.add_calculation(
+                        "Formula Part (1 + (4*lb/d - 0.2)*(tw/tf)^1.5)",
+                        formula_part,
+                    )
+                    logger.add_calculation(
+                        "Nominal Capacity (Rn) - Eq. J10-5b", nominal_capacity
+                    )
 
-        design_capacity = (
-            nominal_capacity * resistance_factor * self._loading_condition
-        )
-        logger.add_output("Design Capacity (phiRn)", design_capacity)
-        logger.display()
+            design_capacity = (
+                nominal_capacity * resistance_factor * self._loading_condition
+            )
+            logger.add_output("Design Capacity (phiRn)", design_capacity)
 
-        return design_capacity
+            return design_capacity
+        finally:
+            logger.display()
 
     def check_dcr(self, demand_force: si.kip, **kwargs) -> float:
         """Calculates the demand-to-capacity ratio."""

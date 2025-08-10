@@ -96,7 +96,7 @@ try:
         edge_distance_vertical=3 * si.inch,
         edge_distance_horizontal=3 * si.inch,
         bolt_diameter=7/8 * si.inch,
-        bolt_grade=BOLT_GRADES["a490_x"],
+        bolt_grade=BOLT_GRADES["a325_x"],
         material=MATERIALS["a572_gr50"],
         angle=47.2 * math.pi / 180
     )
@@ -152,8 +152,16 @@ try:
 
     test_3_web_local_yield = WebLocalYieldingCalculator(endpoint = beam_gusset_connection.member_b, connection = beam_gusset_connection, end_plate=end_plate_column)
     test_3_web_local_yield.calculate_capacity(debug=True)
-    test_3_web_local_cripp
+    test_3_web_local_crippling = WebLocalCrippingCalculator(endpoint = beam_gusset_connection.member_b, connection = beam_gusset_connection, end_plate=end_plate_column)
+    test_3_web_local_crippling.calculate_capacity(debug=True)
 
+    # Gusset to Column Connection
+    test_4_Fnt_modified = BoltShearCalculator(endpl_gusset_connection)
+    test_4_Fnt_modified.calculate_capacity_fnt_modified(applied_loads.gusset_to_column_normal,debug=True) # find a better way to visualize the loads 
+
+    
+
+    print(applied_loads)
     # test_3_web_local_yield.calculate_capacity(debug=True)
 
 
