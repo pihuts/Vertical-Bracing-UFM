@@ -48,7 +48,7 @@ try:
 
     # End Plate for Column Connection
     end_plate_column = Plate(
-        t=1 * si.inch,
+        t=5/8 * si.inch,
         material=MATERIALS["a572_gr50"],
         width=10 * si.inch,
     )
@@ -215,6 +215,9 @@ try:
     print("\n--- All DCR Checks Completed ---")
     asdd = PryingActionCalculator(end_plate_column, gusset_plate_bracing,column_endplate_connection)
     asdsad = asdd.check_dcr( debug=True)
+
+    asdaff = ConnectionCapacityCalculator(end_plate_column,column_endplate_connection,"Axial")
+    asdaff.calculate_capacity(debug=True)
 
     # print("\n\nScript finished successfully.")
 

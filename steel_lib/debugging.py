@@ -80,4 +80,5 @@ class DebugLogger:
             for name, value in self.outputs.items():
                 print(f"    {name:<35}: {self._format_value(value)}")
         
-        print(f"--- END DEBUG: {self.title} ---\n")
+        print(f"--- END DEBUG: {self.title} ---\
+")
