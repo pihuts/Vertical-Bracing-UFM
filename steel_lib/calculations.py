@@ -1766,7 +1766,7 @@ class WeldCalculator:
         self.fa = loads.Pu/self.weld_length
         self.f_avg = 0.5 * ((self.fa**2+self.fv**2)**0.5 + (self.fv**2+self.fa**2)**0.5)
         self.f_peak = (self.fa**2 + self.fv**2)**0.5
-        self.fu_weld = max(self.f_avg ,self.f_peak)
+        self.fu_weld = max(self.f_avg *1.25 ,self.f_peak)
         self.angle = math.atan(self.fa/ self.fv) if self.fv != 0 else 0
         self.strength_increase = 1+0.5*math.sin(self.angle)**1.5
     def calculate_min_thickness(self, debug: bool = False) -> si.inch:
@@ -1785,8 +1785,11 @@ class WeldCalculator:
             logger.add_input("Average Stress (f_avg)", self.f_avg)
             logger.add_input("Peak Stress (f_peak)", self.f_peak)
             logger.add_input("Angle (radians)", self.angle)
-
-            return self.fu_weld/(2*(1.392*si.kip/si.inch)*self.strength_increase)
+            logger.add_input("Ultimate Weld Strength (fu_weld)", self.fu_weld)
+            logger.add_input("Strength Increase Factor", self.strength_increase)
+            min_thickness = self.fu_weld / (2 * (1.392 * si.kip / si.inch) * self.strength_increase)
+            logger.add_input( "minimum thickness", min_thickness)
+            return min_thickness
         finally:
             logger.display()
 

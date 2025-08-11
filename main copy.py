@@ -192,7 +192,7 @@ try:
         component_a=ConnectionComponent.LENGTH,
         component_b=ConnectionComponent.WEB,
         weld_size=0.3125 * si.inch,
-        length=gusset_plate.length,
+        length=gusset_plate.length - gusset_plate.clipping,
         electrode=WELD_ELECTRODES["e70xx"]
     )
     initial_loads = DesignLoads(
