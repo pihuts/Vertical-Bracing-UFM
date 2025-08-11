@@ -1365,7 +1365,8 @@ class PryingActionCalculator:
         self.width_2 = props_2['width']  # Width of the plate
 
         # Assign thickness for the supporting member (gusset)
-        
+        self.member_type = getattr(member_1, 'Type', None)
+        self.member_type_2 = getattr(member_2, 'Type', None)
         
         self.bolt_grade = self.config.bolt_grade
         self.bolt_diameter = self.config.bolt_diameter
@@ -1376,12 +1377,15 @@ class PryingActionCalculator:
         
         # Distances 'a' and 'b' as defined in AISC Manual Part 9
         # 'a' is the distance from the bolt centerline to the edge of the fitting
-        self.a = (min(self.width, self.width_2) - self.g) / 2
+        self.a = (min(self.width, self.width_2) - self.g) / 2 if self.member_type_2 == "PL" else (self.width - self.g) / 2
         # 'b' is the distance from the bolt centerline to the face of the supporting element
-        self.member_type = getattr(member_1, 'Type', None)
+
         
         if self.member_type == 'PL':
-            self.t2 = props_2['t']
+            if self.member_type_2 == 'W':
+                self.t2 = props_2['tw']
+            else:
+                self.t2 = props_2['t']
             self.b =  (self.g - self.t2)/2
         elif self.member_type == 'W':
             self.t2 = props_1['tw']
@@ -1407,10 +1411,10 @@ class PryingActionCalculator:
         self.n_bolts = self.n_rows * self.n_columns
 
         # This Values are hardcoded and will be updated later
-        self.shear_force = 302 * si.kip
+        self.shear_force = 319 * si.kip
         self.tension_force = 176 * si.kip
-        
-        self.B = BoltShearCalculator(self.connection).calculate_capacity_fnt_modified(302 * si.kip,debug=True) * 0.75 * self.bolt_area
+        self.Fnt_prime = BoltShearCalculator(self.connection).calculate_capacity_fnt_modified(self.shear_force ,debug=True)
+        self.B =  self.Fnt_prime* 0.75 * self.bolt_area
 
     def _get_prying_properties(self, member: Any) -> dict:
         """

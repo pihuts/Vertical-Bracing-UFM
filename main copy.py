@@ -61,6 +61,11 @@ try:
         material=MATERIALS["a572_gr50"],
         width=10 * si.inch,
     )
+    end_plate_beam = Plate(
+        t=3/4 * si.inch,
+        material=MATERIALS["a572_gr50"],
+        width=10 * si.inch,
+    )
     
 
     # Gusset Plate for Bracing Connection
@@ -114,6 +119,23 @@ try:
         edge_distance_horizontal=1.75 * si.inch,
         bolt_diameter=7/8 * si.inch,
         bolt_grade=BOLT_GRADES["a325_x"],
+        material=MATERIALS["a572_gr50"],
+        angle=47.2 * math.pi / 180
+    )
+
+    beam_column_connection = ConnectionFactory.create_bolted_connection(
+        member_a=end_plate_column,
+        member_b=support,
+        component_a=ConnectionComponent.TOTAL,
+        component_b=ConnectionComponent.TOTAL,
+        row_spacing=5.5 * si.inch,
+        column_spacing=3.0 * si.inch,
+        n_rows=2,
+        n_columns=6,
+        edge_distance_vertical=1.75 * si.inch,
+        edge_distance_horizontal=1.75 * si.inch,
+        bolt_diameter=7/8 * si.inch,
+        bolt_grade=BOLT_GRADES["a490_x"],
         material=MATERIALS["a572_gr50"],
         angle=47.2 * math.pi / 180
     )
@@ -207,9 +229,16 @@ try:
     test_5_adf = AdmissableDistortionForces(beam=beam,support=support,brace = bracing, loads=initial_loads,connection=endpl_column_connection,lb = 25*si.ft)
     test_5_adf.calculate_admissible_distortion_forces(debug=True)
     beam_column_transferred_forces = test_5_adf.from_adf(test_2_ufm,applied_loads,debug=True)
+    test_5_bolt_shear = BoltShearCalculator(
+        connection=beam_column_connection)
+    test_5_bolt_shear.calculate_capacity_fnt_modified(beam_column_transferred_forces.shear,debug=True)
+    test_5_prying = PryingActionCalculator(
+        member_1=end_plate_beam,
+        member_2=beam,
+        connection=beam_column_connection,
+    )
+    test_5_prying.check_dcr(debug=True)
     
-    
-    print(test_5_adf.from_adf(test_2_ufm,applied_loads,debug=True))
 
 except Exception as e:
     print("\n--- SCRIPT FAILED WITH AN ERROR ---")
