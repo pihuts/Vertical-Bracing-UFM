@@ -65,6 +65,7 @@ try:
         t=3/4 * si.inch,
         material=MATERIALS["a572_gr50"],
         width=10 * si.inch,
+        length = beam.d + 1 * si.inch,  # Assuming the end plate length is equal to the beam depth plus some extra
     )
     
 
@@ -124,8 +125,8 @@ try:
     )
 
     beam_column_connection = ConnectionFactory.create_bolted_connection(
-        member_a=end_plate_column,
-        member_b=support,
+        member_a=beam,
+        member_b=end_plate_beam,
         component_a=ConnectionComponent.TOTAL,
         component_b=ConnectionComponent.TOTAL,
         row_spacing=5.5 * si.inch,
@@ -133,7 +134,23 @@ try:
         n_rows=2,
         n_columns=6,
         edge_distance_vertical=1.75 * si.inch,
-        edge_distance_horizontal=1.75 * si.inch,
+        edge_distance_horizontal=end_plate_beam.length - (6*3*si.inch),
+        bolt_diameter=7/8 * si.inch,
+        bolt_grade=BOLT_GRADES["a490_x"],
+        material=MATERIALS["a572_gr50"],
+        angle=47.2 * math.pi / 180
+    )
+    beam_column_connection1 = ConnectionFactory.create_bolted_connection(
+        member_a=beam,
+        member_b=support,
+        component_a=ConnectionComponent.WEB,
+        component_b=ConnectionComponent.FLANGE,
+        row_spacing=5.5 * si.inch,
+        column_spacing=3.0 * si.inch,
+        n_rows=2,
+        n_columns=6,
+        edge_distance_vertical=1.75 * si.inch,
+        edge_distance_horizontal=end_plate_beam.length - (6*3*si.inch),
         bolt_diameter=7/8 * si.inch,
         bolt_grade=BOLT_GRADES["a490_x"],
         material=MATERIALS["a572_gr50"],
@@ -232,13 +249,28 @@ try:
     test_5_bolt_shear = BoltShearCalculator(
         connection=beam_column_connection)
     test_5_bolt_shear.calculate_capacity_fnt_modified(beam_column_transferred_forces.shear,debug=True)
-    test_5_prying = PryingActionCalculator(
+    test_5_prying_endpl = PryingActionCalculator(
         member_1=end_plate_beam,
         member_2=beam,
         connection=beam_column_connection,
     )
-    test_5_prying.check_dcr(debug=True)
-    
+    test_5_prying_endpl.check_dcr(debug=True)
+    test_5_prying_column = PryingActionCalculator(
+        member_1=support,
+        member_2=end_plate_column,
+        connection=beam_column_connection,
+    )
+    test_5_prying_column.check_dcr(debug=True)
+    test_5_bearing = ConnectionCapacityCalculator(
+        endpoint=beam_column_connection.member_b,connection=beam_column_connection,
+        loading_orientation="Axial",)
+    test_5_bearing.calculate_capacity(debug=True,number_of_shear_planes=1)
+    test_5_blockshear = BlockShearCalculator(endpoint = beam_column_connection.member_b, connection=beam_column_connection,loading_orientation="Axial")
+    test_5_blockshear.calculate_capacity(debug=True)
+    test_6_beam_shear = ShearYieldingCalculator(endpoint=beam_column_connection1.member_a, connection=beam_column_connection)
+    test_6_beam_shear.calculate_capacity(debug=True)
+    test_7_column_shear = ShearYieldingCalculator(endpoint=beam_column_connection1.member_b, connection=beam_column_connection)
+    test_7_column_shear.calculate_capacity(debug=True)
 
 except Exception as e:
     print("\n--- SCRIPT FAILED WITH AN ERROR ---")

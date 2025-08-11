@@ -1751,6 +1751,6 @@ class AdmissableDistortionForces:
             )
         finally:
             logger.display()
-
+# class WeldCalculator:
 
         
