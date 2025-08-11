@@ -155,6 +155,7 @@ class WeldConfiguration:
     length: float
     electrode: WeldElectrode  # Link to the WeldElectrode object
     weld_type: WeldType = "fillet" # Default to fillet, the most common type
+    orientation: Literal["horizontal", "vertical", "overhead"] = "horizontal"
 
 @dataclass(frozen=True)
 class PlateDimensions:
@@ -170,7 +171,7 @@ class DesignLoads:
     """A simple container for the initial load inputs."""
     Pu: si.kip
     Vu: si.kip
-    Aub: si.kip
+    Aub: si.kip = None
 @dataclass(frozen=True)
 class BeamColumnTransferredForce:
     """

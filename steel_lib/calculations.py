@@ -1751,6 +1751,45 @@ class AdmissableDistortionForces:
             )
         finally:
             logger.display()
-# class WeldCalculator:
+class WeldCalculator:
+    def __init__(self,  connection: Connection,loads: DesignLoads):
+        """
+        Initializes the WeldCalculator with the connection configuration.
+        """
+        self.shear =  loads.Vu
+        self.axial = loads.Pu
+        self.connection = connection
+        self.config: WeldConfiguration = connection.configuration
+        self.weld_size = self.config.weld_size
+        self.weld_length = self.config.length
+        self.fv = loads.Vu/self.weld_length
+        self.fa = loads.Pu/self.weld_length
+        self.f_avg = 0.5 * ((self.fa**2+self.fv**2)**0.5 + (self.fv**2+self.fa**2)**0.5)
+        self.f_peak = (self.fa**2 + self.fv**2)**0.5
+        self.fu_weld = max(self.f_avg ,self.f_peak)
+        self.angle = math.atan(self.fa/ self.fv) if self.fv != 0 else 0
+        self.strength_increase = 1+0.5*math.sin(self.angle)**1.5
+    def calculate_min_thickness(self, debug: bool = False) -> si.inch:
+        """
+        Calculates the minimum thickness of the weld based on the shear and axial forces.
+        Returns the minimum thickness in inches.
+        """
+        logger = DebugLogger("Weld Minimum Thickness Calculation", debug)
+        try:
+            logger.add_input("Shear Force (Vu)", self.shear)
+            logger.add_input("Axial Force (Pu)", self.axial)
+            logger.add_input("Weld Size", self.weld_size)
+            logger.add_input("Weld Length", self.weld_length)
+            logger.add_input("Shear Stress (fv)", self.fv)
+            logger.add_input("Axial Stress (fa)", self.fa)
+            logger.add_input("Average Stress (f_avg)", self.f_avg)
+            logger.add_input("Peak Stress (f_peak)", self.f_peak)
+            logger.add_input("Angle (radians)", self.angle)
+
+            return self.fu_weld/(2*(1.392*si.kip/si.inch)*self.strength_increase)
+        finally:
+            logger.display()
+
+
 
         

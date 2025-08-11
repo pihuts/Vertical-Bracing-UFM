@@ -26,7 +26,8 @@ from steel_lib.calculations import (
     WebLocalCrippingCalculator,
     ShearYieldingCalculator,
     PryingActionCalculator,
-    AdmissableDistortionForces
+    AdmissableDistortionForces,
+    WeldCalculator
 )
 
 # --- 1. Define Members, Connections, and Initial Loads ---
@@ -271,6 +272,9 @@ try:
     test_6_beam_shear.calculate_capacity(debug=True)
     test_7_column_shear = ShearYieldingCalculator(endpoint=beam_column_connection1.member_b, connection=beam_column_connection)
     test_7_column_shear.calculate_capacity(debug=True)
+    loads_checking = DesignLoads(Pu = 269 * si.kip, Vu = 440 * si.kip)
+    test_8_plate = WeldCalculator(beam_gusset_connection,loads_checking)
+    test_8_plate.calculate_min_thickness(debug=True)
 
 except Exception as e:
     print("\n--- SCRIPT FAILED WITH AN ERROR ---")
