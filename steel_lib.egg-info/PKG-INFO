@@ -1,0 +1,257 @@
+Metadata-Version: 2.4
+Name: steel_lib
+Version: 0.1.0
+Summary: A Python library for steel connection design calculations.
+Home-page: https://github.com/your_username/your_project_name
+Author: Kilo Code
+Author-email: 
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.6
+Description-Content-Type: text/markdown
+Requires-Dist: forallpeople
+Requires-Dist: steelpy
+Dynamic: author
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
+
+# Steel Connection Design Library
+
+This is a Python library for performing steel connection design calculations based on AISC specifications.
+
+## Installation
+
+To install this library, you can build it from the source code:
+
+```bash
+python setup.py sdist bdist_wheel
+```
+
+Then, you can install the generated wheel file using pip:
+
+```bash
+pip install dist/steel_lib-0.1.0-py3-none-any.whl
+```
+
+## Usage
+
+Once installed, you can import the library and use its components in your Python scripts or notebooks. The following sections provide a detailed walkthrough based on the example in `main copy.py`.
+
+### 1. Imports
+
+First, import the necessary classes and modules from the library:
+
+```python
+import math
+from steel_lib.si_units import si
+from steelpy import aisc
+
+from steel_lib.data_models import (
+    Plate,
+    ConnectionFactory,
+    ConnectionComponent,
+    DesignLoads,
+    AppliedLoads,
+)
+from steel_lib.materials import MATERIALS, BOLT_GRADES, WELD_ELECTRODES
+from steel_lib.member_factory import MemberFactory
+from steel_lib.calculations import (
+    BoltShearCalculator,
+    BlockShearCalculator,
+    ConnectionCapacityCalculator,
+    TensileYieldingCalculator,
+    TensileRuptureCalculator,
+    TensileYieldWhitmore,
+    CompressionBucklingCalculator,
+    UFMCalculator,
+    PlateTensileYieldingCalculator,
+    WebLocalYieldingCalculator,
+    WebLocalCrippingCalculator,
+    ShearYieldingCalculator,
+    PryingActionCalculator,
+)
+```
+
+### 2. Define Members and Plates
+
+Create structural members and plates using the `MemberFactory` and `Plate` classes. Materials are sourced from the predefined `MATERIALS` dictionary.
+
+```python
+# Create and enrich steelpy members using the consolidated factory
+beam = MemberFactory.create_steelpy_member(
+    section_class=aisc.W_shapes,
+    section_name="W21X83",
+    material=MATERIALS["a992"],
+    shape_type="W"
+)
+
+support = MemberFactory.create_steelpy_member(
+    section_class=aisc.W_shapes,
+    section_name="W14X90",
+    material=MATERIALS["a992"],
+    shape_type="W"
+)
+
+bracing = MemberFactory.create_steelpy_member(
+    section_class=aisc.L_shapes,
+    section_name="L8X6X1",
+    material=MATERIALS["a36"],
+    shape_type="L",
+    loading_condition=2,  # Assuming this is a bracing member
+)
+
+# End Plate for Column Connection
+end_plate_column = Plate(
+    t=5/8 * si.inch,
+    material=MATERIALS["a572_gr50"],
+    width=10 * si.inch,
+)
+
+# Gusset Plate for Bracing Connection
+gusset_plate = Plate(
+    t=1 * si.inch,
+    material=MATERIALS["a572_gr50"],
+    clipping=3/4 * si.inch,
+)
+```
+
+### 3. Create Connections
+
+Use the `ConnectionFactory` to define bolted or welded connections between members and plates.
+
+#### Bolted Connection Example
+
+```python
+# Brace to Gusset Plate Connection
+brace_gusset_connection = ConnectionFactory.create_bolted_connection(
+    member_a=bracing,
+    member_b=gusset_plate,
+    component_a=ConnectionComponent.TOTAL,
+    row_spacing=3.0 * si.inch,
+    column_spacing=3.0 * si.inch,
+    n_rows=2,
+    n_columns=7,
+    edge_distance_vertical=2 * si.inch,
+    edge_distance_horizontal=1.5 * si.inch,
+    bolt_diameter=7/8 * si.inch,
+    bolt_grade=BOLT_GRADES["a325_x"],
+    material=MATERIALS["a572_gr50"],
+    angle=47.2 * math.pi / 180
+)
+```
+
+#### Welded Connection Example
+
+```python
+# Gusset Plate to Beam Web Connection
+# Note: Dimensions are set later via UFM calculations
+gusset_plate.set_dimensions(...) # See UFM section
+beam_gusset_connection = ConnectionFactory.create_welded_connection(
+    member_a=gusset_plate,
+    member_b=beam,
+    component_a=ConnectionComponent.LENGTH,
+    component_b=ConnectionComponent.WEB,
+    weld_size=0.3125 * si.inch,
+    length=gusset_plate.length,
+    electrode=WELD_ELECTRODES["e70xx"]
+)
+```
+
+### 4. Perform Calculations
+
+Instantiate calculator classes for various design checks as per AISC standards.
+
+#### Connection Strength Checks
+
+```python
+# Bolt Shear Capacity
+test_1 = BoltShearCalculator(connection=brace_gusset_connection)
+test_1.calculate_capacity_fnt(1, debug=True) # Tension
+test_1.calculate_capacity_fnv(2, debug=True) # Shear
+
+# Tensile Yielding of the bracing member
+test_1_yield = TensileYieldingCalculator(endpoint=brace_gusset_connection.member_a, connection=brace_gusset_connection)
+test_1_yield.calculate_capacity(debug=True)
+
+# Tensile Rupture of the bracing member
+test_1_trupture = TensileRuptureCalculator(endpoint=brace_gusset_connection.member_a, connection=brace_gusset_connection)
+test_1_trupture.calculate_capacity(debug=True)
+
+# Block Shear on the bracing member
+test_1_blockshear = BlockShearCalculator(endpoint=brace_gusset_connection.member_a, connection=brace_gusset_connection, loading_orientation="Axial", loading_condition=2)
+test_1_blockshear.calculate_capacity(debug=True)
+
+# Block Shear on the gusset plate
+test_1_blockshear_gussetplate = BlockShearCalculator(endpoint=brace_gusset_connection.member_b, connection=brace_gusset_connection, loading_orientation="Axial")
+test_1_blockshear_gussetplate.calculate_capacity(debug=True)
+```
+
+#### Uniform Force Method (UFM) for Gusset Plate Design
+
+The `UFMCalculator` determines the required dimensions of the gusset plate and distributes forces.
+
+```python
+# Initialize UFM Calculator
+test_2_ufm = UFMCalculator(
+    beam=beam,
+    support=support,
+    endplate=end_plate_column,
+    connection=endpl_gusset_connection # Gusset-to-Endplate connection
+)
+
+# Get dimensions and load multipliers
+dim_ufm = test_2_ufm.get_dimensions(debug=True)
+final_multipliers = test_2_ufm.get_loads_multipliers(debug=True)
+
+# Update gusset plate with calculated dimensions
+gusset_plate.set_dimensions(dim_ufm)
+```
+
+#### Define and Distribute Loads
+
+Define the initial design loads and then distribute them using the multipliers from the UFM analysis.
+
+```python
+initial_loads = DesignLoads(
+    Pu=840 * si.kip,
+    Vu=50.0 * si.kip,
+    Aub=100 * si.kip
+)
+applied_loads = AppliedLoads.from_ufm(initial_loads, final_multipliers)
+print(applied_loads)
+```
+
+#### Prying Action
+
+Check for prying action in bolted connections.
+
+```python
+test_4_prying = PryingActionCalculator(
+    member_1=end_plate_column,
+    member_2=gusset_plate,
+    connection=endpl_gusset_connection,
+)
+test_4_prying.check_dcr(debug=True)
+```
+
+### 5. Running the Script
+
+The entire process is wrapped in a `try...except` block to catch and report any errors during execution.
+
+```python
+try:
+    # ... all the code from above ...
+
+except Exception as e:
+    import traceback
+    print("\n--- SCRIPT FAILED WITH AN ERROR ---")
+    print(f"Error Type: {type(e).__name__}")
+    print(f"Error Message: {e}")
+    print("Traceback:")
+    traceback.print_exc()

@@ -10,7 +10,7 @@ from .data_models import (
     WeldConfiguration,
     Connection,
     ConnectionComponent,
-    AppliedLoads,DesignLoads
+    AppliedLoads
 )
 from .debugging import DebugLogger
 
@@ -1642,88 +1642,5 @@ class PryingActionCalculator:
         finally:
             logger.display()
 
-class AdmissableDistortionForces:
-    """
-    Calculates the admissible distortion forces for a connection based on AISC Specification J3.2.
-    This class is designed to handle both L and U patterns for block shear calculations.
-    """
 
-    def __init__(self, beam,support,brace,loads: DesignLoads,connection:Connection,lb = None,lc = None):
-        if lb is None and lc is None:
-            raise ValueError("At least one of 'lb' or 'lc' must be provided (not None).")
-        self.connection_config = connection.configuration
-        self._lb = lb.to("inch") if lb else None # Length of the beam
-        self._lc = lc.to("inch") if lc else None  # Length of the support
-        self.Pu = loads.Pu # Factored load
-        self.ixb = beam.Ix # Moment of inertia of the beam
-        self.ixc = support.Ix # Moment of inertia of the support
-        self.area = brace.area * brace.loading_condition # Cross-sectional area of the support
-        self.angle = self.connection_config.angle
-    @property
-    def b(self) -> float:
-        if self._lb:
-            """Returns the length of the beam."""
-            lb = self._lb
-        else:
-            lb = self._lc *math.tan(self.angle)
-        return  lb / 2
-        
-    @property
-    def c(self) -> float:
-        if self._lc:
-            """Returns the length of the support."""
-            lc = self._lc
-        else:
-            lc = self._lb / math.tan(self.angle)
-        return lc/2
-    def calculate_admissible_distortion_forces(self, debug: bool = False) -> si.kip:
-        """
-        Calculates the admissible distortion forces based on AISC J3.2.
-        Returns the calculated force in kip.
-        """
-        logger = DebugLogger("Admissible Distortion Forces Calculation", debug)
-        try:
-            # Log inputs
-            logger.add_input("Factored Load (Pu)", self.Pu)
-            logger.add_input("Moment of Inertia of Beam (Ix_b)", self.ixb)
-            logger.add_input("Moment of Inertia of Support (Ix_c)", self.ixc)
-            logger.add_input("Cross-sectional Area of Beam", self.area)
-            logger.add_input("Connection Angle (radians)", self.angle)
-            logger.add_input("Initial Beam Length (lb_init)", self._lb)
-            logger.add_input("Initial Support Length (lc_init)", self._lc)
-
-            # Calculate and log intermediate lengths b and c
-            b_val = self.b
-            c_val = self.c
-            logger.add_calculation("Effective Beam Length (b = lb/2 or lc*tan(angle)/2)", b_val)
-            logger.add_calculation("Effective Support Length (c = lc/2 or lb/tan(angle)/2)", c_val)
-
-            # Calculate the admissible distortion forces
-            term1 = self.Pu / (self.area * b_val*c_val)
-            logger.add_calculation("Term 1 (Pu / Area)", term1)
-
-            term2_numerator = self.ixb * self.ixc
-            term2_denominator = (self.ixb / b_val) + (2 * self.ixc / c_val)
-            term2 = term2_numerator / term2_denominator
-            logger.add_calculation("Term 2 Numerator (Ix_b * Ix_c)", term2_numerator)
-            logger.add_calculation("Term 2 Denominator (Ix_b/b + 2*Ix_c/c)", term2_denominator)
-            logger.add_calculation("Term 2 (Term2_Numerator / Term2_Denominator)", term2)
-
-            term3_numerator = b_val**2 + c_val**2
-            term3_denominator = b_val * c_val
-            term3 = term3_numerator / term3_denominator
-            logger.add_calculation("Term 3 Numerator (b + c)", term3_numerator)
-            logger.add_calculation("Term 3 Denominator (b * c)", term3_denominator)
-            logger.add_calculation("Term 3 ((b + c) / (b * c))", term3)
-
-            admissible_force = 6 * term1 * term2 * term3
-
-            # Log final output
-            logger.add_output("Admissible Distortion Force", admissible_force)
-
-            return admissible_force
-        finally:
-            logger.display()
-
-
-        
+3

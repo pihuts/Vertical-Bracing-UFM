@@ -26,6 +26,7 @@ from steel_lib.calculations import (
     WebLocalCrippingCalculator,
     ShearYieldingCalculator,
     PryingActionCalculator,
+    AdmissableDistortionForces
 )
 
 # --- 1. Define Members, Connections, and Initial Loads ---
@@ -203,10 +204,8 @@ try:
     )
     test_4_prying.check_dcr(debug=True),
 
-    print(support.Type)
-    print(end_plate_column.Type)
-
-
+    test_5_adf = AdmissableDistortionForces(beam=beam,support=support,brace = bracing, loads=initial_loads,connection=endpl_column_connection,lb = 25*si.ft)
+    test_5_adf.calculate_admissible_distortion_forces(debug=True)
 
 
 
