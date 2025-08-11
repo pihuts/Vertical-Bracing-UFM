@@ -171,6 +171,14 @@ class DesignLoads:
     Pu: si.kip
     Vu: si.kip
     Aub: si.kip
+@dataclass(frozen=True)
+class BeamColumnTransferredForce:
+    """
+    Represents the transferred force from a beam to a column.
+    This is a simple container for the force value.
+    """
+    shear: si.kip
+    normal: si.kip
 
 @dataclass(frozen=True)
 class AppliedLoads:
@@ -220,6 +228,7 @@ class AppliedLoads:
             gusset_to_beam_shear=hub,
             gusset_to_beam_normal=vub,
         )
+
 
 from typing import Union
 

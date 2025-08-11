@@ -10,7 +10,8 @@ from .data_models import (
     WeldConfiguration,
     Connection,
     ConnectionComponent,
-    AppliedLoads,DesignLoads
+    AppliedLoads,DesignLoads,
+    BeamColumnTransferredForce
 )
 from .debugging import DebugLogger
 
@@ -1716,12 +1717,34 @@ class AdmissableDistortionForces:
             logger.add_calculation("Term 3 Denominator (b * c)", term3_denominator)
             logger.add_calculation("Term 3 ((b + c) / (b * c))", term3)
 
-            admissible_force = 6 * term1 * term2 * term3
+            self.admissible_force = 6 * term1 * term2 * term3
 
             # Log final output
-            logger.add_output("Admissible Distortion Force", admissible_force)
+            logger.add_output("Admissible Distortion Force", self.admissible_force)
 
-            return admissible_force
+            return self.admissible_force
+        finally:
+            logger.display()
+    def from_adf(self ,ufm:UFMCalculator,applied_loads: AppliedLoads, debug: bool = False) -> BeamColumnTransferredForce:
+        """
+        Updates the AppliedLoads instance with values from an AppliedDesignForces object.
+        This allows for easy integration with the ADF calculations.
+        """
+        try:
+            logger = DebugLogger("Placeholder", debug)
+            normal_force_adf = self.admissible_force/(ufm._beam_half_depth + ufm._beta)
+            logger.add_input("Admissible Force", self.admissible_force)
+            logger.add_input("Beam Half Depth", ufm._beam_half_depth)
+            logger.add_input("Beta Factor", ufm._beta)
+            logger.add_input("Normal Force ADF", normal_force_adf)
+            beam_to_column_shear = applied_loads.gusset_to_column_shear - normal_force_adf + applied_loads.initial_transfer_force
+            beam_to_column_normal = applied_loads.gusset_to_beam_normal + applied_loads.initial_beam_shear
+            logger.add_output("Beam to Column Shear", beam_to_column_normal)
+            logger.add_output("Beam to Column Normal", beam_to_column_shear)
+            return BeamColumnTransferredForce(
+                shear=beam_to_column_normal,
+                normal=beam_to_column_shear
+            )
         finally:
             logger.display()
 

@@ -206,8 +206,10 @@ try:
 
     test_5_adf = AdmissableDistortionForces(beam=beam,support=support,brace = bracing, loads=initial_loads,connection=endpl_column_connection,lb = 25*si.ft)
     test_5_adf.calculate_admissible_distortion_forces(debug=True)
-
-
+    beam_column_transferred_forces = test_5_adf.from_adf(test_2_ufm,applied_loads,debug=True)
+    
+    
+    print(test_5_adf.from_adf(test_2_ufm,applied_loads,debug=True))
 
 except Exception as e:
     print("\n--- SCRIPT FAILED WITH AN ERROR ---")
