@@ -91,6 +91,10 @@ try:
         material=MATERIALS["a572_gr50"],
         angle=47.2 * math.pi / 180
     )
+    
+
+
+
 
     endpl_gusset_connection = ConnectionFactory.create_bolted_connection(
         member_a=end_plate_column,

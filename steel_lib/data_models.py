@@ -123,16 +123,16 @@ class BoltGrade:
 @dataclass
 class BoltConfiguration:
     """Defines the geometry and properties of a bolted connection."""
-    row_spacing: si.inch
-    column_spacing: si.inch
-    n_rows: int
-    n_columns: int
-    edge_distance_vertical: si.inch
-    edge_distance_horizontal: si.inch
-    bolt_diameter: si.inch
-    bolt_grade: BoltGrade
+    row_spacing: si.inch   # Default to 3 inches if not specified
+    column_spacing: si.inch  # Default to 3 inches if not specified
+    edge_distance_vertical: si.inch 
+    edge_distance_horizontal: si.inch 
+    bolt_diameter: si.inch 
+    bolt_grade: BoltGrade 
     material: Material
     angle: float = 0.0
+    n_rows: int = 1  # Default to 1 row if not specified
+    n_columns: int = 1  # Default to 1 column if not specified
 from steelpy import aisc
 from typing import Any, Type
 
@@ -169,9 +169,9 @@ class LoadMultipliers:
 @dataclass(frozen=True)
 class DesignLoads:
     """A simple container for the initial load inputs."""
-    Pu: si.kip
-    Vu: si.kip
-    Aub: si.kip = None
+    Pu: si.kip = 0 * si.kip
+    Vu: si.kip = 0 * si.kip
+    Aub: si.kip = 0 * si.kip
 @dataclass(frozen=True)
 class BeamColumnTransferredForce:
     """

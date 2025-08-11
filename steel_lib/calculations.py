@@ -261,13 +261,14 @@ class TensileYieldingCalculator:
     """
     Calculates the tensile yielding capacity of a member.
     """
-    def __init__(self, endpoint: "ConnectionEndpoint", connection: Connection):
+    def __init__(self, endpoint: "ConnectionEndpoint", connection: Connection, load: DesignLoads):
         self.endpoint = endpoint
         self.member = endpoint.member
         self.connection = connection
         self.Fy = self.member.Fy
         self.Ag = get_applicable_gross_area(endpoint, connection)
         self.loading_condition = getattr(self.member, 'loading_condition', 1)
+        self.load = load
 
     def calculate_capacity(self, resistance_factor: float = 0.9, debug: bool = False) -> float:
         """
@@ -287,23 +288,24 @@ class TensileYieldingCalculator:
 
         return design_strength
 
-    def check_dcr(self, demand_force: si.kip, **kwargs) -> float:
+    def check_dcr(self, **kwargs) -> float:
         """Calculates the demand-to-capacity ratio."""
         capacity = self.calculate_capacity(**kwargs)
         if capacity == 0: return float('inf')
-        return abs(demand_force / capacity)
+        return abs(self.load.Pu / capacity)
 
 class TensileRuptureCalculator:
     """
     Calculates the tensile rupture capacity of a member.
     """
-    def __init__(self, endpoint: "ConnectionEndpoint", connection: Connection):
+    def __init__(self, endpoint: "ConnectionEndpoint", connection: Connection, load: DesignLoads):
         self.endpoint = endpoint
         self.member = endpoint.member
         self.connection = connection
         self.bolt_config = connection.configuration
         self.Fu = self.member.Fu
         self.loading_condition = getattr(self.member, 'loading_condition', 1)
+        self.loads = load
 
     def calculate_capacity(self, resistance_factor: float = 0.75, debug: bool = False) -> float:
         """
@@ -365,11 +367,11 @@ class TensileRuptureCalculator:
 
         return design_strength
 
-    def check_dcr(self, demand_force: si.kip, **kwargs) -> float:
+    def check_dcr(self, **kwargs) -> float:
         """Calculates the demand-to-capacity ratio."""
         capacity = self.calculate_capacity(**kwargs)
         if capacity == 0: return float('inf')
-        return abs(demand_force / capacity)
+        return abs(self.loads.Pu / capacity)
 
 MemberType = Any # Use 'Any' for robust compatibility with steelpy objects
 LoadingOrientation = Literal["Axial", "Shear"]
@@ -382,10 +384,12 @@ class BlockShearCalculator:
         self,
         endpoint: "ConnectionEndpoint",
         connection: Connection,
-        loading_orientation: LoadingOrientation,
+        loading_orientation: LoadingOrientation = "Axial",
         loading_condition: int = 1,
         thickness: float = None,
+        loads: DesignLoads = None
     ):
+        self.loads = loads
         self.endpoint = endpoint
         self.member = endpoint.member
         self.bolt_config: BoltConfiguration = connection.configuration
@@ -570,23 +574,23 @@ class BlockShearCalculator:
 
         return design_capacity
 
-    def check_dcr(self, demand_force: si.kip, **kwargs) -> float:
+    def check_dcr(self, **kwargs) -> float:
         """Calculates the demand-to-capacity ratio."""
         capacity = self.calculate_capacity(**kwargs)
         if capacity == 0: return float('inf')
-        return abs(demand_force / capacity)
+        return abs(self.loads.Pu / capacity)
 
 class ConnectionCapacityCalculator:
     """
     Calculates the governing bolt capacity for an entire connection, considering
     bolt shear and bolt bearing/tearout for inner and outer bolts.
     """
-    def __init__(self, endpoint: "ConnectionEndpoint", connection: Connection, loading_orientation: Literal["Axial", "Shear"]):
+    def __init__(self, endpoint: "ConnectionEndpoint", connection: Connection, loads: DesignLoads):
         self.endpoint = endpoint
         self.connection = connection
         self.member = endpoint.member
         self.bolt_config: BoltConfiguration = connection.configuration
-        self.loading_orientation = loading_orientation
+        self.loads = loads
 
         # Extract common properties
         self.Fu = self.member.Fu
@@ -598,16 +602,16 @@ class ConnectionCapacityCalculator:
         self.hole_diameter = self.bolt_config.bolt_diameter + (1/8) * si.inch
 
         # Determine geometry based on loading orientation (DRY principle)
-        if self.loading_orientation == "Axial":
-            self.longitudinal_spacing = self.bolt_config.column_spacing
-            self.longitudinal_edge_dist = self.bolt_config.edge_distance_horizontal
-            self.bolts_per_line = self.bolt_config.n_columns
-            self.num_lines = self.bolt_config.n_rows
-        else: # Shear
-            self.longitudinal_spacing = self.bolt_config.row_spacing
-            self.longitudinal_edge_dist = self.bolt_config.edge_distance_vertical
-            self.bolts_per_line = self.bolt_config.n_rows
-            self.num_lines = self.bolt_config.n_columns
+        # if self.loading_orientation == "Axial":
+        self.longitudinal_spacing = self.bolt_config.column_spacing
+        self.longitudinal_edge_dist = self.bolt_config.edge_distance_horizontal
+        self.bolts_per_line = self.bolt_config.n_columns
+        self.num_lines = self.bolt_config.n_rows
+        # else: # Shear
+        #     self.longitudinal_spacing = self.bolt_config.row_spacing
+        #     self.longitudinal_edge_dist = self.bolt_config.edge_distance_vertical
+        #     self.bolts_per_line = self.bolt_config.n_rows
+        #     self.num_lines = self.bolt_config.n_columns
 
 
     def _calculate_lc_inner(self) -> float:
@@ -620,7 +624,7 @@ class ConnectionCapacityCalculator:
 
     def calculate_capacity(
         self,
-        number_of_shear_planes: int,
+        number_of_shear_planes: int = 1,
         resistance_factor: float = 0.75,
         debug: bool = False,
     ) -> float:
@@ -679,11 +683,12 @@ class ConnectionCapacityCalculator:
 
         return design_capacity
 
-    def check_dcr(self, demand_force: si.kip, **kwargs) -> float:
+    def check_dcr(self, **kwargs) -> float:
         """Calculates the demand-to-capacity ratio."""
+        print(f"Calculating DCR for loads: {self.loads.Pu}")
         capacity = self.calculate_capacity(**kwargs)
         if capacity == 0: return float('inf')
-        return abs(demand_force / capacity)
+        return abs(self.loads.Pu / capacity)
 
 
 class TensileYieldWhitmore:
@@ -971,7 +976,7 @@ class PlateTensileYieldingCalculator:
     '.dimensions' attribute containing a PlateDimensions object.
     """
 
-    def __init__(self, endpoint: "ConnectionEndpoint"):
+    def __init__(self, endpoint: "ConnectionEndpoint",loads : DesignLoads):
         """
         Initializes the calculator by extracting required data from the endpoint's member object.
         """
