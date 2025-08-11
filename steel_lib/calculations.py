@@ -124,8 +124,32 @@ def round_up_to_interval(number: Numeric, interval: Numeric) -> Numeric:
     return math.ceil(number / interval) * interval
 
 
-def check_dcr(capacity, demand):
-    return demand / capacity  # Returns the ratio of demand to capacity
+def check_dcr(capacity: float, demand: float, limit_state_name: str, debug: bool = False) -> float:
+    """
+    Calculates the demand-to-capacity ratio (DCR) and provides detailed logging.
+
+    Args:
+        capacity (float): The calculated capacity of the component.
+        demand (float): The applied demand on the component.
+        limit_state_name (str): The name of the limit state being checked (for logging).
+        debug (bool): If True, detailed debug information will be printed.
+
+    Returns:
+        float: The demand-to-capacity ratio.
+    """
+    logger = DebugLogger(f"DCR Check: {limit_state_name}", debug)
+    logger.add_input("Demand", demand)
+    logger.add_input("Capacity", capacity)
+
+    if capacity == 0:
+        dcr = float('inf')
+        logger.add_output("DCR", "Infinity (capacity is zero)")
+    else:
+        dcr = demand / capacity
+        logger.add_output("DCR (Demand / Capacity)", dcr)
+    
+    logger.display()
+    return dcr
 
 
 class BoltShearCalculator:
@@ -178,8 +202,7 @@ class BoltShearCalculator:
     def check_dcr_fnv(self, demand_force: si.kip, **kwargs) -> float:
         """Calculates the demand-to-capacity ratio for Fnv."""
         capacity = self.calculate_capacity_fnv(**kwargs)
-        if capacity == 0: return float('inf')
-        return abs(demand_force / capacity)
+        return check_dcr(capacity, abs(demand_force), "Bolt Shear Strength", **kwargs)
         
     def calculate_capacity_fnt(
         self,
@@ -211,8 +234,7 @@ class BoltShearCalculator:
     def check_dcr_fnt(self, demand_force: si.kip, **kwargs) -> float:
         """Calculates the demand-to-capacity ratio for Fnt."""
         capacity = self.calculate_capacity_fnt(**kwargs)
-        if capacity == 0: return float('inf')
-        return abs(demand_force / capacity)
+        return check_dcr(capacity, abs(demand_force), "Bolt Tensile Strength", **kwargs)
     def calculate_capacity_fnt_modified(
         self,demand_force_shear: si.kip,
         resistance_factor: float = 0.75,
@@ -291,8 +313,7 @@ class TensileYieldingCalculator:
     def check_dcr(self, **kwargs) -> float:
         """Calculates the demand-to-capacity ratio."""
         capacity = self.calculate_capacity(**kwargs)
-        if capacity == 0: return float('inf')
-        return abs(self.load.Pu / capacity)
+        return check_dcr(capacity, abs(self.load.Pu), f"Tensile Yielding ({self.endpoint.component.name})", **kwargs)
 
 class TensileRuptureCalculator:
     """
@@ -370,8 +391,7 @@ class TensileRuptureCalculator:
     def check_dcr(self, **kwargs) -> float:
         """Calculates the demand-to-capacity ratio."""
         capacity = self.calculate_capacity(**kwargs)
-        if capacity == 0: return float('inf')
-        return abs(self.loads.Pu / capacity)
+        return check_dcr(capacity, abs(self.loads.Pu), f"Tensile Rupture ({self.endpoint.component.name})", **kwargs)
 
 MemberType = Any # Use 'Any' for robust compatibility with steelpy objects
 LoadingOrientation = Literal["Axial", "Shear"]
@@ -577,8 +597,7 @@ class BlockShearCalculator:
     def check_dcr(self, **kwargs) -> float:
         """Calculates the demand-to-capacity ratio."""
         capacity = self.calculate_capacity(**kwargs)
-        if capacity == 0: return float('inf')
-        return abs(self.loads.Pu / capacity)
+        return check_dcr(capacity, abs(self.loads.Pu), f"Block Shear {self.failure_pattern}-Pattern", **kwargs)
 
 class ConnectionCapacityCalculator:
     """
@@ -685,10 +704,8 @@ class ConnectionCapacityCalculator:
 
     def check_dcr(self, **kwargs) -> float:
         """Calculates the demand-to-capacity ratio."""
-        print(f"Calculating DCR for loads: {self.loads.Pu}")
         capacity = self.calculate_capacity(**kwargs)
-        if capacity == 0: return float('inf')
-        return abs(self.loads.Pu / capacity)
+        return check_dcr(capacity, abs(self.loads.Pu), "Connection Capacity", debug = True)
 
 
 class TensileYieldWhitmore:
@@ -696,7 +713,7 @@ class TensileYieldWhitmore:
     Calculates the tensile yielding capacity based on the Whitmore section.
     """
 
-    def __init__(self, endpoint: "ConnectionEndpoint", connection: Connection):
+    def __init__(self, endpoint: "ConnectionEndpoint", connection: Connection,loads : DesignLoads):
         """Initializes the calculator with the member and connection objects."""
         self.endpoint = endpoint
         self.member = endpoint.member
@@ -707,6 +724,7 @@ class TensileYieldWhitmore:
         self.spacing_col = self.bolt_config.column_spacing
         self.spacing_row = self.bolt_config.row_spacing
         self.t = self._get_member_thickness()
+        self.loads = loads
 
     def _get_member_thickness(self) -> float:
         """Determines thickness from various member types and ensures it has units."""
@@ -760,11 +778,10 @@ class TensileYieldWhitmore:
         logger.display()
         return design_capacity
 
-    def check_dcr(self, demand_force: si.kip, **kwargs) -> float:
+    def check_dcr(self, **kwargs) -> float:
         """Calculates the demand-to-capacity ratio."""
         capacity = self.calculate_capacity(**kwargs)
-        if capacity == 0: return float('inf')
-        return abs(demand_force / capacity)
+        return check_dcr(capacity, abs(self.loads.Pu), "Whitmore Section Tensile Yield", **kwargs)
 
 
 class CompressionBucklingCalculator:
@@ -772,13 +789,14 @@ class CompressionBucklingCalculator:
     Calculates the compression buckling capacity of a member.
     """
 
-    def __init__(self, endpoint: "ConnectionEndpoint", connection: Connection):
+    def __init__(self, endpoint: "ConnectionEndpoint", connection: Connection, loads: DesignLoads):
         """Initializes the calculator with the member and connection."""
         self.endpoint = endpoint
         self.member = endpoint.member
         self.bolt_config: BoltConfiguration = connection.configuration
         self.Fy = self.member.Fy
         self.t = self._get_member_thickness()
+        self.loads = loads
 
     def _get_member_thickness(self) -> float:
         """Determ-ines thickness from various member types and ensures it has units."""
@@ -831,11 +849,10 @@ class CompressionBucklingCalculator:
                 "Member is not slender enough for compression buckling calculation."
             )
 
-    def check_dcr(self, demand_force: si.kip, **kwargs) -> float:
+    def check_dcr(self, **kwargs) -> float:
         """Calculates the demand-to-capacity ratio."""
         capacity = self.calculate_capacity(**kwargs)
-        if capacity == 0: return float('inf')
-        return abs(demand_force / capacity)
+        return check_dcr(capacity, abs(self.loads.Pu), "Compression Buckling", **kwargs)
 
 
 class UFMCalculator:
@@ -1020,14 +1037,12 @@ class PlateTensileYieldingCalculator:
     def check_dcr_horizontal(self, demand_force: si.kip, **kwargs) -> float:
         """Calculates the demand-to-capacity ratio for the horizontal path."""
         capacity = self.calculate_capacity_horizontal(**kwargs)
-        if capacity == 0: return float('inf')
-        return abs(demand_force / capacity)
+        return check_dcr(capacity, abs(demand_force), "Plate Tensile Yielding (Horizontal)", **kwargs)
 
     def check_dcr_vertical(self, demand_force: si.kip, **kwargs) -> float:
         """Calculates the demand-to-capacity ratio for the vertical path."""
         capacity = self.calculate_capacity_vertical(**kwargs)
-        if capacity == 0: return float('inf')
-        return abs(demand_force / capacity)
+        return check_dcr(capacity, abs(demand_force), "Plate Tensile Yielding (Vertical)", **kwargs)
 
     def calculate_capacity_horizontal(
         self, resistance_factor: float = 0.9, debug: bool = False
@@ -1144,8 +1159,7 @@ class WebLocalYieldingCalculator:
     def check_dcr(self, demand_force: si.kip, **kwargs) -> float:
         """Calculates the demand-to-capacity ratio."""
         capacity = self.calculate_capacity(**kwargs)
-        if capacity == 0: return float('inf')
-        return abs(demand_force / capacity)
+        return check_dcr(capacity, abs(demand_force), "Web Local Yielding", **kwargs)
     
 class WebLocalCrippingCalculator:
     """
@@ -1270,8 +1284,7 @@ class WebLocalCrippingCalculator:
     def check_dcr(self, demand_force: si.kip, **kwargs) -> float:
         """Calculates the demand-to-capacity ratio."""
         capacity = self.calculate_capacity(**kwargs)
-        if capacity == 0: return float('inf')
-        return abs(demand_force / capacity)
+        return check_dcr(capacity, abs(demand_force), "Web Local Crippling", **kwargs)
 class ShearYieldingCalculator:
     """
     Calculates the shear yielding capacity of a member based on AISC Specification J3.2.
@@ -1338,8 +1351,7 @@ class ShearYieldingCalculator:
     def check_dcr(self, demand_force: si.kip, **kwargs) -> float:
         """Calculates the demand-to-capacity ratio."""
         capacity = self.calculate_capacity(**kwargs)
-        if capacity == 0: return float('inf')
-        return abs(demand_force / capacity)
+        return check_dcr(capacity, abs(demand_force), f"Shear Yielding ({self.endpoint.component.name})", **kwargs)
 
 
 class PryingActionCalculator:
@@ -1588,69 +1600,22 @@ class PryingActionCalculator:
         Q = self.calculate_Q(debug=False) # Debugging is handled in the main check_dcr
         return self.B * Q
 
-    def check_dcr(self,resistance_factor: float = 1, debug: bool = False) -> float:
+    def check_dcr(self, resistance_factor: float = 1, debug: bool = False) -> float:
         """
         Calculates the DCR for prying action.
         DCR = (T_req) / (phi * B * Q)
         """
-        logger = DebugLogger("Prying Action Calculation", debug)
-        try:
-            # --- Log All Inputs ---
-            logger.add_input("--- Plate Properties ---", "")
-            logger.add_input("Plate Thickness (t)", self.t)
-            logger.add_input("Plate Width (width)", self.width)
-            logger.add_input("Plate Ultimate Strength (Fu)", self.plate_Fu)
-            logger.add_input("--- Supporting Member Properties ---", "")
-            logger.add_input("Gusset/Support Thickness", self.t2)
-            logger.add_input("--- Bolt Properties ---", "")
-            logger.add_input("Bolt Diameter (d)", self.bolt_diameter)
-            logger.add_input("Bolt Grade", self.bolt_grade.name)
-            logger.add_input("Nominal Bolt Tension (Fnt)", self.bolt_grade.Fnt)
-            logger.add_input("Number of Bolts (n_bolts)", self.n_bolts)
-            logger.add_input("--- Connection Geometry ---", "")
-            logger.add_input("Tributary Length (p)", self.p)
-            logger.add_input("Gage (g)", self.g)
-            logger.add_input("--- Forces ---", "")
-            logger.add_input("Total Tension Force", self.tension_force)
-            logger.add_input("Tension per Bolt (T_req)", self.tension_force / self.n_bolts)
-            logger.add_input("--- Factors ---", "")
-            logger.add_input("Resistance Factor (phi)", resistance_factor)
-
-            # --- Log Intermediate Calculations ---
-            logger.add_calculation("--- Derived Geometric Properties ---", "")
-            logger.add_calculation("Distance 'a'", self.a)
-            logger.add_calculation("Distance 'b'", self.b)
-            logger.add_calculation("Effective Hole Diameter (d')", self.d_prime)
-            logger.add_calculation("Distance from bolt CL to grip (b')", self.b_prime)
-            logger.add_calculation("Effective distance 'a' (a')", self.a_prime)
-            logger.add_calculation("Ratio of b' to a' (rho)", self.p_)
-            logger.add_calculation("Ratio of unstiffened length (delta)", self.delta)
-            
-            logger.add_calculation("--- Bolt Strength Calculation ---", "")
-            logger.add_calculation("Bolt Area (Ab)", self.bolt_area)
-            logger.add_calculation("Available Bolt Tensile Strength (B)", self.B)
-
-            # --- Prying Calculation (delegates logging) ---
-            t_req = self._calculate_t_req(debug=debug)
-            Q = self.calculate_Q(debug=debug)
-            
-            available_strength = self.B * Q
-            design_capacity = (resistance_factor * available_strength).to('kip')
-
-            logger.add_calculation("--- Final Capacity ---", "")
-            logger.add_calculation("Required Thickness for No Prying (t_req)", t_req)
-            logger.add_calculation("Prying Factor (Q)", Q)
-            logger.add_calculation("Available Bolt Strength with Prying (B*Q)", available_strength)
-            logger.add_output("Available Design Strength (phi*B*Q)", design_capacity)
-
-            if design_capacity == 0:
-                return float('inf')
-
-            dcr = (self.tension_force / self.n_bolts) / design_capacity
-            logger.add_output("Demand/Capacity Ratio (DCR)", dcr)
-            return dcr
-        finally:
-            logger.display()
+        # The detailed logging is now handled within the main check_dcr function
+        # and the individual calculation methods. We just need to call them.
+        t_req = self._calculate_t_req(debug=debug)
+        Q = self.calculate_Q(debug=debug)
+        
+        available_strength = self.B * Q
+        design_capacity = (resistance_factor * available_strength).to('kip')
+        
+        demand_per_bolt = self.tension_force / self.n_bolts
+        
+        return check_dcr(design_capacity, demand_per_bolt, "Prying Action", debug=debug)
 
 class AdmissableDistortionForces:
     """

@@ -167,14 +167,14 @@ try:
     # a) Whitmore Section Tensile Yielding
     print("\nCHECK: Whitmore Section Tensile Yielding...")
     whitmore_checker = TensileYieldWhitmore(bracing_connection.member_a, bracing_connection)
-    dcr_whitmore = whitmore_checker.check_dcr(demand_force=applied_loads.initial_brace_load)
+    dcr_whitmore = whitmore_checker.check_dcr(demand_force=applied_loads.initial_brace_load, debug=True)
     print(f"   DCR = {dcr_whitmore:.2f} {'(OK)' if dcr_whitmore <= 1.0 else '(FAIL)'}")
 
     # b) Compression Buckling
     print("\nCHECK: Gusset Compression Buckling...")
     comp_buckling_checker = CompressionBucklingCalculator(bracing_connection.member_a, bracing_connection)
     try:
-        dcr_comp_buckling = comp_buckling_checker.check_dcr(demand_force=applied_loads.initial_brace_load)
+        dcr_comp_buckling = comp_buckling_checker.check_dcr(demand_force=applied_loads.initial_brace_load, debug=True)
         print(f"   DCR = {dcr_comp_buckling:.2f} {'(OK)' if dcr_comp_buckling <= 1.0 else '(FAIL)'}")
     except ValueError as e:
         print(f"   CHECK FAILED: {e}")
@@ -182,26 +182,26 @@ try:
     # c) Gusset-to-Beam Interface: Shear Yielding
     print("\nCHECK: Gusset-to-Beam Shear Yielding...")
     gusset_beam_shear_checker = ShearYieldingCalculator(beam_gusset_connection.member_a, beam_gusset_connection)
-    dcr_gusset_beam_shear = gusset_beam_shear_checker.check_dcr(demand_force=applied_loads.gusset_to_beam_shear)
+    dcr_gusset_beam_shear = gusset_beam_shear_checker.check_dcr(demand_force=applied_loads.gusset_to_beam_shear, debug=True)
     print(f"   DCR = {dcr_gusset_beam_shear:.2f} {'(OK)' if dcr_gusset_beam_shear <= 1.0 else '(FAIL)'}")
 
     # d) Gusset-to-Beam Interface: Tensile Yielding (Normal Force)
     print("\nCHECK: Gusset-to-Beam Tensile Yielding...")
     gusset_beam_tensile_checker = PlateTensileYieldingCalculator(beam_gusset_connection.member_a)
     # Note: The capacity is calculated along the horizontal length of the plate here
-    dcr_gusset_beam_tensile = gusset_beam_tensile_checker.check_dcr_horizontal(demand_force=applied_loads.gusset_to_beam_normal)
+    dcr_gusset_beam_tensile = gusset_beam_tensile_checker.check_dcr_horizontal(demand_force=applied_loads.gusset_to_beam_normal, debug=True)
     print(f"   DCR = {dcr_gusset_beam_tensile:.2f} {'(OK)' if dcr_gusset_beam_tensile <= 1.0 else '(FAIL)'}")
 
     # e) Beam Web Local Yielding
     print("\nCHECK: Beam Web Local Yielding...")
     web_yield_checker = WebLocalYieldingCalculator(beam_gusset_connection.member_b, beam_gusset_connection, end_plate_column)
-    dcr_web_yield = web_yield_checker.check_dcr(demand_force=applied_loads.gusset_to_beam_normal)
+    dcr_web_yield = web_yield_checker.check_dcr(demand_force=applied_loads.gusset_to_beam_normal, debug=True)
     print(f"   DCR = {dcr_web_yield:.2f} {'(OK)' if dcr_web_yield <= 1.0 else '(FAIL)'}")
 
     # f) Beam Web Local Crippling
     print("\nCHECK: Beam Web Local Crippling...")
     web_crippling_checker = WebLocalCrippingCalculator(beam_gusset_connection.member_b, beam_gusset_connection, end_plate_column)
-    dcr_web_crippling = web_crippling_checker.check_dcr(demand_force=applied_loads.gusset_to_beam_normal)
+    dcr_web_crippling = web_crippling_checker.check_dcr(demand_force=applied_loads.gusset_to_beam_normal, debug=True)
     print(f"   DCR = {dcr_web_crippling:.2f} {'(OK)' if dcr_web_crippling <= 1.0 else '(FAIL)'}")
 
     # g) Gusset-to-Column Interface: Bolt Shear
@@ -210,7 +210,8 @@ try:
     # Check against the shear force component on the column interface
     dcr_bolt_shear = bolt_shear_checker.check_dcr_fnv(
         demand_force=applied_loads.gusset_to_column_shear / (column_endplate_connection.configuration.n_rows * column_endplate_connection.configuration.n_columns),
-        number_of_shear_planes=1
+        number_of_shear_planes=1,
+        debug=True
     )
     bolt_modified_fnt = bolt_shear_checker.calculate_capacity_fnt_modified(
         demand_force_shear=302 * si.kip,
@@ -227,7 +228,7 @@ try:
     # print(f"   DCR (per bolt) = {dcr_prying:.2f} {'(OK)' if dcr_prying <= 1.0 else '(FAIL)'}")
     print("\n--- All DCR Checks Completed ---")
     asdd = PryingActionCalculator(end_plate_column, gusset_plate_bracing,column_endplate_connection)
-    asdsad = asdd.check_dcr( debug=True)
+    asdsad = asdd.check_dcr(debug=True)
 
     asdaff = ConnectionCapacityCalculator(column_endplate_connection.member_a,column_endplate_connection,"Axial")
     asdaff.calculate_capacity(number_of_shear_planes=1, debug=True)

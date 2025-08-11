@@ -107,7 +107,7 @@ class TestCalculations(unittest.TestCase):
 
         # Create Calculator and run DCR check
         whitmore_checker = TensileYieldWhitmore(self.bracing_connection.member_a, self.bracing_connection)
-        dcr = whitmore_checker.check_dcr(demand_force=self.demand_force)
+        dcr = whitmore_checker.check_dcr(demand_force=self.demand_force, debug=True)
 
         # Assertion
         self.assertAlmostEqual(dcr, expected_dcr, places=2)
@@ -121,7 +121,7 @@ class TestCalculations(unittest.TestCase):
 
         # Create Calculator and run DCR check
         buckling_checker = CompressionBucklingCalculator(self.bracing_connection.member_a, self.bracing_connection)
-        dcr = buckling_checker.check_dcr(demand_force=self.demand_force)
+        dcr = buckling_checker.check_dcr(demand_force=self.demand_force, debug=True)
 
         # Assertion
         self.assertAlmostEqual(dcr, expected_dcr, places=2)
@@ -137,7 +137,7 @@ class TestCalculations(unittest.TestCase):
 
         # Create Calculator and run DCR check
         shear_checker = ShearYieldingCalculator(self.beam_gusset_connection.member_a, self.beam_gusset_connection)
-        dcr = shear_checker.check_dcr(demand_force=440.34 * si.kip)
+        dcr = shear_checker.check_dcr(demand_force=440.34 * si.kip, debug=True)
 
         # Assertion
         self.assertAlmostEqual(dcr, expected_dcr, places=2)
@@ -153,7 +153,7 @@ class TestCalculations(unittest.TestCase):
 
         # Create Calculator and run DCR check
         tensile_checker = PlateTensileYieldingCalculator(self.gusset_plate_bracing)
-        dcr = tensile_checker.check_dcr_vertical(demand_force=269.02 * si.kip)
+        dcr = tensile_checker.check_dcr_vertical(demand_force=269.02 * si.kip, debug=True)
 
         # Assertion
         self.assertAlmostEqual(dcr, expected_dcr, places=2)
@@ -170,7 +170,7 @@ class TestCalculations(unittest.TestCase):
 
         # Create Calculator and run DCR check
         web_yielding_checker = WebLocalYieldingCalculator(self.beam_gusset_connection.member_b, self.beam_gusset_connection, self.end_plate_column)
-        dcr = web_yielding_checker.check_dcr(demand_force=269.02 * si.kip)
+        dcr = web_yielding_checker.check_dcr(demand_force=269.02 * si.kip, debug=True)
 
         # Assertion
         self.assertAlmostEqual(dcr, expected_dcr, places=2)
@@ -187,7 +187,7 @@ class TestCalculations(unittest.TestCase):
 
         # Create Calculator and run DCR check
         web_crippling_checker = WebLocalCrippingCalculator(self.beam_gusset_connection.member_b, self.beam_gusset_connection, self.end_plate_column)
-        dcr = web_crippling_checker.check_dcr(demand_force=269.02 * si.kip)
+        dcr = web_crippling_checker.check_dcr(demand_force=269.02 * si.kip, debug=True)
 
         # Assertion
         self.assertAlmostEqual(dcr, expected_dcr, places=2)
