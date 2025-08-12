@@ -10,7 +10,7 @@ from .data_models import (
     WeldConfiguration,
     Connection,
     ConnectionComponent,
-    AppliedLoads,DesignLoads,
+    DesignLoads,
     BeamColumnTransferredForce
 )
 from .debugging import DebugLogger
@@ -151,6 +151,70 @@ def check_dcr(capacity: float, demand: float, limit_state_name: str, debug: bool
     logger.display()
     return dcr
 
+@dataclass(frozen=True)
+class AppliedLoads:
+    """
+    A single, immutable container for all initial and calculated loads.
+    Should be constructed using one of its factory classmethods.
+    """
+    # Initial Design Loads
+    initial_brace_load: si.kip
+    initial_beam_shear: si.kip
+    initial_transfer_force: si.kip
+
+    # Calculated Interface Forces
+    gusset_to_column_shear: si.kip
+    gusset_to_column_normal: si.kip
+    gusset_to_beam_shear: si.kip
+    gusset_to_beam_normal: si.kip
+
+    gusset_beam_interface: DesignLoads
+    gusset_endplate_interface: DesignLoads
+    beam_column_interface:DesignLoads
+
+    @classmethod
+    def from_ufm(
+        cls,
+        design_loads: "DesignLoads", # We'll define this helper next
+        multipliers: "LoadMultipliers"
+    ) :
+        """
+        Factory method to create an AppliedLoads object using the
+        Uniform Force Method calculations.
+        """
+        # Perform the load distribution calculations here
+        vuc = multipliers.vertical_force_column_interface * design_loads.Pu
+        vub = multipliers.vertical_force_beam_interface * design_loads.Pu
+        huc = multipliers.horizontal_force_column_interface * design_loads.Pu
+        hub = multipliers.horizontal_force_beam_interface * design_loads.Pu
+        
+        # Add Aub and Vu to the column interface forces
+        total_column_shear = huc + design_loads.Vu
+        total_column_normal = vuc + design_loads.Aub
+        total_column_shear = huc 
+        total_column_normal = vuc 
+        # Calculate gusset to beam forces
+        gusset_beam_interface = DesignLoads(
+            Pu=vub,
+            Vu=hub,
+        )
+        # Calculate gusset to endplate forces
+        gusset_endplate_interface = DesignLoads(
+            Pu=total_column_shear,
+            Vu=total_column_normal,
+        )
+        # Calculate beam-column interface forces
+
+        return cls(
+            initial_brace_load=design_loads.Pu,
+            initial_beam_shear=design_loads.Vu,
+            initial_transfer_force=design_loads.Aub,
+            gusset_to_column_shear=total_column_shear,
+            gusset_to_column_normal=total_column_normal,
+            gusset_to_beam_shear=hub,
+            gusset_to_beam_normal=vub,
+        )
+    
 
 class BoltShearCalculator:
     """
@@ -855,22 +919,51 @@ class CompressionBucklingCalculator:
         return check_dcr(capacity, abs(self.loads.Pu), "Compression Buckling", **kwargs)
 
 
-class UFMCalculator:
+class ConnectionAnalysis:
     """
-    Calculates UFM endplate dimensions and load multipliers with a
-    comprehensive debug mode to show all intermediate values.
+    A unified class to perform all connection analysis calculations, including
+    UFM, admissible distortion forces, and final load calculations.
     """
 
-    def __init__(self, beam: Any, support: Any, endplate: Any, connection: Connection):
-        config: BoltConfiguration = connection.configuration
+    def __init__(self, beam: Any, support: Any, brace: Any, endplate: Any, connection: Connection, loads: DesignLoads, debug: bool = False):
+        """
+        Initializes the analysis with all necessary components and runs the calculations.
+        """
+        self.beam = beam
+        self.support = support
+        self.brace = brace
+        self.endplate = endplate
+        self.connection = connection
+        self.loads = loads
+        self.config: BoltConfiguration = connection.configuration
+        self.debug = debug
 
-        self._beam_depth = self._get_attribute(beam, ["d", "depth"])
-        self._support_depth = self._get_attribute(support, ["d", "depth"])
-        self._end_plate_thickness = self._get_attribute(endplate, ["t", "thickness"])
-        self._edge_dist = config.edge_distance_horizontal
-        self._col_spacing = config.column_spacing
-        self._n_col = config.n_columns
-        self._angle_rad = config.angle
+        # Run all calculations
+        self.run_analysis()
+
+    def run_analysis(self):
+        """
+        Executes all calculation steps and stores the results as public attributes.
+        """
+        logger = DebugLogger("ConnectionAnalysis High-Level", self.debug)
+        logger.add_input("Initial Brace Load", self.loads.Pu)
+        logger.add_input("Initial Beam Shear", self.loads.Vu)
+        logger.add_input("Initial Transfer Force", self.loads.Aub)
+
+        # 1. UFM Calculations
+        self.ufm_multipliers = self._calculate_ufm_multipliers(self.debug)
+        self.plate_dimensions = self._calculate_plate_dimensions(self.debug)
+
+        # 2. Admissible Distortion Forces
+        self.admissible_distortion_force = self._calculate_admissible_distortion_forces(self.debug)
+
+        logger.add_output("UFM Multipliers", self.ufm_multipliers)
+        logger.add_output("Plate Dimensions", self.plate_dimensions)
+        logger.add_output("Admissible Distortion Force", self.admissible_distortion_force)
+        logger.display()
+
+        # 3. Final Load Calculations (can be added here)
+        # self.final_loads = self._calculate_final_loads()
 
     def _get_attribute(self, obj: Any, potential_names: list[str]) -> float:
         for name in potential_names:
@@ -878,73 +971,90 @@ class UFMCalculator:
                 value = getattr(obj, name)
                 if hasattr(value, 'units'):
                     return value
-                # Check if the value is a number before applying units
                 if isinstance(value, (int, float)):
                     return value * si.inch
-                return value # Return as is if it's not a number and has no units
-        raise AttributeError(
-            f"Object does not have any of the expected attributes: {potential_names}"
+                return value
+        raise AttributeError(f"Object does not have any of the expected attributes: {potential_names}")
+
+    # --- UFM Logic (private methods) ---
+    def _calculate_ufm_multipliers(self, debug: bool = False) -> LoadMultipliers:
+        """Calculates and returns the load multipliers for the UFM interfaces."""
+        logger = DebugLogger("UFM Load Multipliers", debug)
+        
+        beam_depth = self._get_attribute(self.beam, ["d", "depth"])
+        support_depth = self._get_attribute(self.support, ["d", "depth"])
+        edge_dist = self.config.edge_distance_horizontal
+        col_spacing = self.config.column_spacing
+        n_col = self.config.n_columns
+        angle_rad = self.config.angle
+
+        beam_half_depth = beam_depth / 2
+        support_half_depth = support_depth / 2
+        beta = edge_dist + ((n_col - 1) * col_spacing) / 2
+        alpha = (beam_half_depth + beta) * math.tan(angle_rad) - support_half_depth
+        r = ((alpha + support_half_depth) ** 2 + (beam_half_depth + beta) ** 2) ** 0.5
+
+        logger.add_input("Beam Depth", beam_depth)
+        logger.add_input("Support Depth", support_depth)
+        logger.add_input("Edge Distance (horiz)", edge_dist)
+        logger.add_input("Column Spacing", col_spacing)
+        logger.add_input("Number of Columns", n_col)
+        logger.add_input("Connection Angle", f"{math.degrees(angle_rad):.2f} degrees")
+        logger.add_calculation("beta", beta)
+        logger.add_calculation("alpha", alpha)
+        logger.add_calculation("r", r)
+
+        multipliers = LoadMultipliers(
+            vertical_force_column_interface=beta / r,
+            vertical_force_beam_interface=beam_half_depth / r,
+            horizontal_force_column_interface=support_half_depth / r,
+            horizontal_force_beam_interface=alpha / r,
         )
 
-    @property
-    def _beam_half_depth(self) -> float:
-        return self._beam_depth / 2
+        logger.add_output("Vertical Force (Column Interface)", multipliers.vertical_force_column_interface)
+        logger.add_output("Vertical Force (Beam Interface)", multipliers.vertical_force_beam_interface)
+        logger.add_output("Horizontal Force (Column)", multipliers.horizontal_force_column_interface)
+        logger.add_output("Horizontal Force (Beam)", multipliers.horizontal_force_beam_interface)
+        logger.display()
 
-    @property
-    def _support_half_depth(self) -> float:
-        return self._support_depth / 2
+        return multipliers
 
-    @property
-    def _beta(self) -> float:
-        return self._edge_dist + ((self._n_col - 1) * self._col_spacing) / 2
-
-    @property
-    def _alpha(self) -> float:
-        return (
-            (self._beam_half_depth + self._beta) * math.tan(self._angle_rad)
-            - self._support_half_depth
-        )
-
-    @property
-    def _r(self) -> float:
-        return (
-            (self._alpha + self._support_half_depth) ** 2
-            + (self._beam_half_depth + self._beta) ** 2
-        ) ** 0.5
-
-    @property
-    def _horizontal_plate_length(self) -> float:
-        k_line_clearance = 0.75 * si.inch
-        return 2 * self._alpha - 2 * self._end_plate_thickness - k_line_clearance
-
-    def get_dimensions(self, debug: bool = False) -> PlateDimensions:
+    def _calculate_plate_dimensions(self, debug: bool = False) -> PlateDimensions:
         """Calculates and returns the final, rounded plate dimensions."""
         logger = DebugLogger("UFM Plate Dimensions", debug)
-        logger.add_input("Beam Depth", self._beam_depth)
-        logger.add_input("Support Depth", self._support_depth)
-        logger.add_input("End Plate Thickness", self._end_plate_thickness)
-        logger.add_input("Edge Distance (vert)", self._edge_dist)
-        logger.add_input("Row Spacing", self._col_spacing)
-        logger.add_input("Number of Rows", self._n_col)
-        logger.add_input("Connection Angle", f"{math.degrees(self._angle_rad):.2f} degrees")
 
-        logger.add_calculation("_beta", self._beta)
-        logger.add_calculation("_alpha", self._alpha)
-        logger.add_calculation("Horizontal Plate Length (unrounded)", self._horizontal_plate_length)
+        beam_depth = self._get_attribute(self.beam, ["d", "depth"])
+        support_depth = self._get_attribute(self.support, ["d", "depth"])
+        end_plate_thickness = self._get_attribute(self.endplate, ["t", "thickness"])
+        edge_dist = self.config.edge_distance_horizontal
+        col_spacing = self.config.column_spacing
+        n_col = self.config.n_columns
+        angle_rad = self.config.angle
 
-        unrounded_vertical = (
-            self._edge_dist * 2
-            + ((self._n_col - 1) * self._col_spacing)
-            + 0.5 * si.inch
-        )
+        beam_half_depth = beam_depth / 2
+        support_half_depth = support_depth / 2
+        beta = edge_dist + ((n_col - 1) * col_spacing) / 2
+        alpha = (beam_half_depth + beta) * math.tan(angle_rad) - support_half_depth
+        
+        k_line_clearance = 0.75 * si.inch
+        horizontal_plate_length = 2 * alpha - 2 * end_plate_thickness - k_line_clearance
+
+        logger.add_input("Beam Depth", beam_depth)
+        logger.add_input("Support Depth", support_depth)
+        logger.add_input("End Plate Thickness", end_plate_thickness)
+        logger.add_input("Edge Distance (horiz)", edge_dist)
+        logger.add_input("Column Spacing", col_spacing)
+        logger.add_input("Number of Columns", n_col)
+        logger.add_input("Connection Angle", f"{math.degrees(angle_rad):.2f} degrees")
+        logger.add_calculation("beta", beta)
+        logger.add_calculation("alpha", alpha)
+        logger.add_calculation("Horizontal Plate Length (unrounded)", horizontal_plate_length)
+
+        unrounded_vertical = (edge_dist * 2 + ((n_col - 1) * col_spacing) + 0.5 * si.inch)
         logger.add_calculation("Vertical Plate Length (unrounded)", unrounded_vertical)
 
-        vertical_dim = round_up_to_interval(
-            number=unrounded_vertical, interval=0.25 * si.inch
-        )
-        horizontal_dim = round_up_to_interval(
-            number=self._horizontal_plate_length, interval=0.25 * si.inch
-        )
+        vertical_dim = round_up_to_interval(number=unrounded_vertical, interval=0.25 * si.inch)
+        horizontal_dim = round_up_to_interval(number=horizontal_plate_length, interval=0.25 * si.inch)
 
         logger.add_output("Final Vertical Dimension", vertical_dim)
         logger.add_output("Final Horizontal Dimension", horizontal_dim)
@@ -953,39 +1063,55 @@ class UFMCalculator:
         return PlateDimensions(
             vertical=vertical_dim,
             horizontal=horizontal_dim,
-            thickness=self._end_plate_thickness,
+            thickness=end_plate_thickness,
         )
 
-    def get_loads_multipliers(self, debug: bool = False) -> LoadMultipliers:
-        """Calculates and returns the load multipliers for the UFM interfaces."""
-        logger = DebugLogger("UFM Load Multipliers", debug)
-        logger.add_input("Beam Depth", self._beam_depth)
-        logger.add_input("Support Depth", self._support_depth)
-        logger.add_input("Edge Distance (vert)", self._edge_dist)
-        logger.add_input("Row Spacing", self._col_spacing)
-        logger.add_input("Number of Rows", self._n_col)
-        logger.add_input("Connection Angle", f"{math.degrees(self._angle_rad):.2f} degrees")
+    # --- Admissible Distortion Logic (private methods) ---
+    def _calculate_admissible_distortion_forces(self, debug: bool = False) -> si.kip:
+        """
+        Calculates the admissible distortion forces based on AISC J3.2.
+        Returns the calculated force in kip.
+        """
+        logger = DebugLogger("Admissible Distortion Forces Calculation", debug)
+        
+        # Using plate dimensions calculated from UFM
+        lb = self.plate_dimensions.horizontal
+        lc = self.plate_dimensions.vertical
 
-        logger.add_calculation("_beta", self._beta)
-        logger.add_calculation("_alpha", self._alpha)
-        logger.add_calculation("_r", self._r)
+        Pu = self.loads.Pu
+        ixb = self.beam.Ix
+        ixc = self.support.Ix
+        area = self.brace.area * getattr(self.brace, 'loading_condition', 1)
+        angle = self.config.angle
 
-        multipliers = LoadMultipliers(
-            vertical_force_column_interface=self._beta / self._r,
-            vertical_force_beam_interface=self._beam_half_depth / self._r,
-            horizontal_force_column_interface=self._support_half_depth / self._r,
-            horizontal_force_beam_interface=self._alpha / self._r,
-        )
+        b_val = lb / 2
+        c_val = lc / 2
 
-        logger.add_output("Shear Force (Column Interface)", multipliers.vertical_force_column_interface)
-        logger.add_output("Shear Force (Beam Interface)", multipliers.vertical_force_beam_interface)
-        logger.add_output("Normal Force (Column)", multipliers.horizontal_force_column_interface)
-        logger.add_output("Normal Force (Beam)", multipliers.horizontal_force_beam_interface)
+        logger.add_input("Factored Load (Pu)", Pu)
+        logger.add_input("Moment of Inertia of Beam (Ix_b)", ixb)
+        logger.add_input("Moment of Inertia of Support (Ix_c)", ixc)
+        logger.add_input("Cross-sectional Area of Brace", area)
+        logger.add_input("Connection Angle (radians)", angle)
+        logger.add_input("Effective Beam Length (lb)", lb)
+        logger.add_input("Effective Support Length (lc)", lc)
+        logger.add_calculation("b (lb/2)", b_val)
+        logger.add_calculation("c (lc/2)", c_val)
+
+        if (area * b_val * c_val) == 0 or ((ixb / b_val) + (2 * ixc / c_val)) == 0:
+             admissible_force = 0 * si.kip
+        else:
+            term1 = Pu / (area * b_val * c_val)
+            term2_numerator = ixb * ixc
+            term2_denominator = (ixb / b_val) + (2 * ixc / c_val)
+            term2 = term2_numerator / term2_denominator
+            term3_numerator = b_val**2 + c_val**2
+            term3_denominator = b_val * c_val
+            term3 = term3_numerator / term3_denominator
+            admissible_force = 6 * term1 * term2 * term3
+
+        logger.add_output("Admissible Distortion Force", admissible_force)
         logger.display()
-
-        return multipliers
-
-
+        return admissible_force
 class PlateTensileYieldingCalculator:
     """
     Calculates design tensile strength based on gross section yielding (AISC J4.1a).
@@ -1617,110 +1743,6 @@ class PryingActionCalculator:
         
         return check_dcr(design_capacity, demand_per_bolt, "Prying Action", debug=debug)
 
-class AdmissableDistortionForces:
-    """
-    Calculates the admissible distortion forces for a connection based on AISC Specification J3.2.
-    This class is designed to handle both L and U patterns for block shear calculations.
-    """
-
-    def __init__(self, beam,support,brace,loads: DesignLoads,connection:Connection,lb = None,lc = None):
-        if lb is None and lc is None:
-            raise ValueError("At least one of 'lb' or 'lc' must be provided (not None).")
-        self.connection_config = connection.configuration
-        self._lb = lb.to("inch") if lb else None # Length of the beam
-        self._lc = lc.to("inch") if lc else None  # Length of the support
-        self.Pu = loads.Pu # Factored load
-        self.ixb = beam.Ix # Moment of inertia of the beam
-        self.ixc = support.Ix # Moment of inertia of the support
-        self.area = brace.area * brace.loading_condition # Cross-sectional area of the support
-        self.angle = self.connection_config.angle
-    @property
-    def b(self) -> float:
-        if self._lb:
-            """Returns the length of the beam."""
-            lb = self._lb
-        else:
-            lb = self._lc *math.tan(self.angle)
-        return  lb / 2
-        
-    @property
-    def c(self) -> float:
-        if self._lc:
-            """Returns the length of the support."""
-            lc = self._lc
-        else:
-            lc = self._lb / math.tan(self.angle)
-        return lc/2
-    def calculate_admissible_distortion_forces(self, debug: bool = False) -> si.kip:
-        """
-        Calculates the admissible distortion forces based on AISC J3.2.
-        Returns the calculated force in kip.
-        """
-        logger = DebugLogger("Admissible Distortion Forces Calculation", debug)
-        try:
-            # Log inputs
-            logger.add_input("Factored Load (Pu)", self.Pu)
-            logger.add_input("Moment of Inertia of Beam (Ix_b)", self.ixb)
-            logger.add_input("Moment of Inertia of Support (Ix_c)", self.ixc)
-            logger.add_input("Cross-sectional Area of Beam", self.area)
-            logger.add_input("Connection Angle (radians)", self.angle)
-            logger.add_input("Initial Beam Length (lb_init)", self._lb)
-            logger.add_input("Initial Support Length (lc_init)", self._lc)
-
-            # Calculate and log intermediate lengths b and c
-            b_val = self.b
-            c_val = self.c
-            logger.add_calculation("Effective Beam Length (b = lb/2 or lc*tan(angle)/2)", b_val)
-            logger.add_calculation("Effective Support Length (c = lc/2 or lb/tan(angle)/2)", c_val)
-
-            # Calculate the admissible distortion forces
-            term1 = self.Pu / (self.area * b_val*c_val)
-            logger.add_calculation("Term 1 (Pu / Area)", term1)
-
-            term2_numerator = self.ixb * self.ixc
-            term2_denominator = (self.ixb / b_val) + (2 * self.ixc / c_val)
-            term2 = term2_numerator / term2_denominator
-            logger.add_calculation("Term 2 Numerator (Ix_b * Ix_c)", term2_numerator)
-            logger.add_calculation("Term 2 Denominator (Ix_b/b + 2*Ix_c/c)", term2_denominator)
-            logger.add_calculation("Term 2 (Term2_Numerator / Term2_Denominator)", term2)
-
-            term3_numerator = b_val**2 + c_val**2
-            term3_denominator = b_val * c_val
-            term3 = term3_numerator / term3_denominator
-            logger.add_calculation("Term 3 Numerator (b + c)", term3_numerator)
-            logger.add_calculation("Term 3 Denominator (b * c)", term3_denominator)
-            logger.add_calculation("Term 3 ((b + c) / (b * c))", term3)
-
-            self.admissible_force = 6 * term1 * term2 * term3
-
-            # Log final output
-            logger.add_output("Admissible Distortion Force", self.admissible_force)
-
-            return self.admissible_force
-        finally:
-            logger.display()
-    def from_adf(self ,ufm:UFMCalculator,applied_loads: AppliedLoads, debug: bool = False) -> BeamColumnTransferredForce:
-        """
-        Updates the AppliedLoads instance with values from an AppliedDesignForces object.
-        This allows for easy integration with the ADF calculations.
-        """
-        try:
-            logger = DebugLogger("Placeholder", debug)
-            normal_force_adf = self.admissible_force/(ufm._beam_half_depth + ufm._beta)
-            logger.add_input("Admissible Force", self.admissible_force)
-            logger.add_input("Beam Half Depth", ufm._beam_half_depth)
-            logger.add_input("Beta Factor", ufm._beta)
-            logger.add_input("Normal Force ADF", normal_force_adf)
-            beam_to_column_shear = applied_loads.gusset_to_column_shear - normal_force_adf + applied_loads.initial_transfer_force
-            beam_to_column_normal = applied_loads.gusset_to_beam_normal + applied_loads.initial_beam_shear
-            logger.add_output("Beam to Column Shear", beam_to_column_normal)
-            logger.add_output("Beam to Column Normal", beam_to_column_shear)
-            return BeamColumnTransferredForce(
-                shear=beam_to_column_normal,
-                normal=beam_to_column_shear
-            )
-        finally:
-            logger.display()
 class WeldCalculator:
     def __init__(self,  connection: Connection,loads: DesignLoads):
         """
