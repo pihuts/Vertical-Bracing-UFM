@@ -102,7 +102,7 @@ def get_applicable_thickness(endpoint: "ConnectionEndpoint") -> float:
 
     # Ensure units are applied if it's a raw number
     if isinstance(thickness, (int, float)) and not hasattr(thickness, 'units'):
-        return thickness * si.inch
+        return thickness
     return thickness
 
 
@@ -429,7 +429,7 @@ class TensileRuptureCalculator:
         logger.add_calculation("Shear Lag Factor (Ubs = 1 - x_bar / l)", Ubs)
 
         # --- Net Area (An) Calculation ---
-        dhole = dbolt + (1/8) * si.inch
+        dhole = dbolt + 1/8
         logger.add_calculation("Hole Diameter (d_hole = d_bolt + 1/8)", dhole)
         
         area_deduction = dhole * n_rows * t
@@ -491,7 +491,7 @@ class BlockShearCalculator:
 
         # CORRECTED: _get_member_thickness now always returns a unit-aware value
         self.thickness = thickness if thickness is not None else get_applicable_thickness(endpoint)
-        self.bolt_hole_diameter = self.bolt_config.bolt_diameter + (1/8) * si.inch
+        self.bolt_hole_diameter = self.bolt_config.bolt_diameter + 1/8
 
         if self.loading_orientation == "Shear" or self.member.Type == "L":
             self.failure_pattern = "L"
@@ -679,10 +679,10 @@ class ConnectionCapacityCalculator:
         self.Fu = self.member.Fu
         self.thickness = get_applicable_thickness(endpoint)
         self.bolt_diameter = self.bolt_config.bolt_diameter
-        self.bolt_diameter_nominal = self.bolt_config.bolt_diameter + (1/16) * si.inch
+        self.bolt_diameter_nominal = self.bolt_config.bolt_diameter + 1/16
 
         # Per AISC, standard hole diameter is bolt diameter + 1/8"
-        self.hole_diameter = self.bolt_config.bolt_diameter + (1/8) * si.inch
+        self.hole_diameter = self.bolt_config.bolt_diameter + 1/8
 
         # Determine geometry based on loading orientation (DRY principle)
         # if self.loading_orientation == "Axial":
@@ -797,12 +797,12 @@ class TensileYieldWhitmore:
             if hasattr(t_val, 'units'):
                 return t_val
             if isinstance(t_val, (int, float)):
-                return t_val * si.inch
+                return t_val
             return t_val
         elif hasattr(self.member, "tw"):
             tw_val = self.member.tw
             if isinstance(tw_val, (int, float)):
-                return tw_val * si.inch
+                return tw_val
             return tw_val
         raise AttributeError("Member does not have a recognizable thickness attribute.")
 
@@ -817,8 +817,8 @@ class TensileYieldWhitmore:
     def area_whitmore(self) -> float:
         """Calculates the area of the Whitmore section."""
         return (
-            self.length_whitmore - 4.7 * si.inch
-        ) * self.t + 4.7 * si.inch * 0.515 * si.inch
+            self.length_whitmore - 4.7
+        ) * self.t + 4.7 * 0.515
 
     def calculate_capacity(
         self, resistance_factor: float = 0.9, debug: bool = False
@@ -869,12 +869,12 @@ class CompressionBucklingCalculator:
             if hasattr(t_val, 'units'):
                 return t_val
             if isinstance(t_val, (int, float)):
-                return t_val * si.inch
+                return t_val
             return t_val
         elif hasattr(self.member, "tw"):
             tw_val = self.member.tw
             if isinstance(tw_val, (int, float)):
-                return tw_val * si.inch
+                return tw_val
             return tw_val
         raise AttributeError("Member does not have a recognizable thickness attribute.")
 
@@ -890,7 +890,7 @@ class CompressionBucklingCalculator:
 
     @property
     def slenderness_ratio(self):
-        return (self.k * 9.76 * si.inch) / (self.r)
+        return (self.k * 9.76) / (self.r)
 
     def calculate_capacity(self, resistance_factor=0.9, debug: bool = False) -> float:
         """
@@ -904,7 +904,7 @@ class CompressionBucklingCalculator:
         logger.add_input("Resistance Factor (phi)", resistance_factor)
 
         if self.slenderness_ratio <= 25:
-            capacity = self.Fy * 20.9 * si.inch**2 * resistance_factor
+            capacity = self.Fy * 20.9 * resistance_factor
             logger.add_output("Design Capacity (phiRn)", capacity)
             logger.display()
             return capacity
@@ -937,6 +937,14 @@ class ConnectionAnalysis:
         self.loads = loads
         self.config: BoltConfiguration = connection.configuration
         self.debug = debug
+        self.lb = getattr(beam, 'length', None)
+        if self.lb:
+            self.lb = self.lb.to('inch')
+        self.lc = getattr(support, 'length', None)
+        if self.lc:
+            self.lc = self.lc.to('inch')
+
+
 
         # Run all calculations
         self.run_analysis()
@@ -972,7 +980,7 @@ class ConnectionAnalysis:
                 if hasattr(value, 'units'):
                     return value
                 if isinstance(value, (int, float)):
-                    return value * si.inch
+                    return value
                 return value
         raise AttributeError(f"Object does not have any of the expected attributes: {potential_names}")
 
@@ -981,8 +989,8 @@ class ConnectionAnalysis:
         """Calculates and returns the load multipliers for the UFM interfaces."""
         logger = DebugLogger("UFM Load Multipliers", debug)
         
-        beam_depth = self._get_attribute(self.beam, ["d", "depth"])
-        support_depth = self._get_attribute(self.support, ["d", "depth"])
+        beam_depth = self._get_attribute(self.beam, ["d", "depth"]).to('inch')
+        support_depth = self._get_attribute(self.support, ["d", "depth"]).to('inch')
         edge_dist = self.config.edge_distance_horizontal
         col_spacing = self.config.column_spacing
         n_col = self.config.n_columns
@@ -992,7 +1000,7 @@ class ConnectionAnalysis:
         support_half_depth = support_depth / 2
         beta = edge_dist + ((n_col - 1) * col_spacing) / 2
         alpha = (beam_half_depth + beta) * math.tan(angle_rad) - support_half_depth
-        r = ((alpha + support_half_depth) ** 2 + (beam_half_depth + beta) ** 2) ** 0.5
+        r = ((alpha + support_half_depth)**2 + (beam_half_depth + beta)**2)**0.5
 
         logger.add_input("Beam Depth", beam_depth)
         logger.add_input("Support Depth", support_depth)
@@ -1036,7 +1044,7 @@ class ConnectionAnalysis:
         beta = edge_dist + ((n_col - 1) * col_spacing) / 2
         alpha = (beam_half_depth + beta) * math.tan(angle_rad) - support_half_depth
         
-        k_line_clearance = 0.75 * si.inch
+        k_line_clearance = 0.75
         horizontal_plate_length = 2 * alpha - 2 * end_plate_thickness - k_line_clearance
 
         logger.add_input("Beam Depth", beam_depth)
@@ -1050,11 +1058,11 @@ class ConnectionAnalysis:
         logger.add_calculation("alpha", alpha)
         logger.add_calculation("Horizontal Plate Length (unrounded)", horizontal_plate_length)
 
-        unrounded_vertical = (edge_dist * 2 + ((n_col - 1) * col_spacing) + 0.5 * si.inch)
+        unrounded_vertical = (edge_dist * 2 + ((n_col - 1) * col_spacing) + 0.5)
         logger.add_calculation("Vertical Plate Length (unrounded)", unrounded_vertical)
 
-        vertical_dim = round_up_to_interval(number=unrounded_vertical, interval=0.25 * si.inch)
-        horizontal_dim = round_up_to_interval(number=horizontal_plate_length, interval=0.25 * si.inch)
+        vertical_dim = round_up_to_interval(number=unrounded_vertical, interval=0.25)
+        horizontal_dim = round_up_to_interval(number=horizontal_plate_length, interval=0.25)
 
         logger.add_output("Final Vertical Dimension", vertical_dim)
         logger.add_output("Final Horizontal Dimension", horizontal_dim)
@@ -1067,6 +1075,37 @@ class ConnectionAnalysis:
         )
 
     # --- Admissible Distortion Logic (private methods) ---
+    def _get_effective_lengths(self, debug: bool = False) -> tuple[float, float]:
+        """
+        Determines the effective beam (lb) and column (lc) lengths for distortion calculations.
+        It prioritizes overrides and calculates missing values based on the connection angle.
+        """
+        logger = DebugLogger("Effective Length Calculation", debug)
+        
+        lb = self.lb
+        lc = self.lc
+        angle = self.config.angle
+
+        logger.add_input("lb_override", lb)
+        logger.add_input("lc_override", lc)
+        logger.add_input("Connection Angle", angle)
+
+
+        if lb is not None and lc is None:
+            lc = lb / math.tan(angle)
+            logger.add_calculation("Calculated lc from lb and angle", lc)
+        elif lc is not None and lb is None:
+            lb = lc * math.tan(angle)
+            logger.add_calculation("Calculated lb from lc and angle", lb)
+        
+        if lb is None or lc is None:
+            raise ValueError("Effective lengths 'lb' and 'lc' could not be determined.")
+
+        logger.add_output("Final lb", lb)
+        logger.add_output("Final lc", lc)
+        logger.display()
+        return lb, lc
+
     def _calculate_admissible_distortion_forces(self, debug: bool = False) -> si.kip:
         """
         Calculates the admissible distortion forces based on AISC J3.2.
@@ -1074,9 +1113,7 @@ class ConnectionAnalysis:
         """
         logger = DebugLogger("Admissible Distortion Forces Calculation", debug)
         
-        # Using plate dimensions calculated from UFM
-        lb = self.plate_dimensions.horizontal
-        lc = self.plate_dimensions.vertical
+        lb, lc = self._get_effective_lengths(debug)
 
         Pu = self.loads.Pu
         ixb = self.beam.Ix
@@ -1098,7 +1135,7 @@ class ConnectionAnalysis:
         logger.add_calculation("c (lc/2)", c_val)
 
         if (area * b_val * c_val) == 0 or ((ixb / b_val) + (2 * ixc / c_val)) == 0:
-             admissible_force = 0 * si.kip
+             admissible_force = 0
         else:
             term1 = Pu / (area * b_val * c_val)
             term2_numerator = ixb * ixc
@@ -1239,7 +1276,7 @@ class WebLocalYieldingCalculator:
             logger.add_input("Resistance Factor (phi)", resistance_factor)
             logger.add_input("Loading Condition", self._loading_condition)
 
-            clip_dist = 3 / 4 * si.inch
+            clip_dist = 3 / 4
             
             # Log inputs before calculation
             logger.add_calculation("Input: self._connection_length", self._connection_length)
@@ -1343,7 +1380,7 @@ class WebLocalCrippingCalculator:
             logger.add_calculation("EF Term ((E*Fy*tf)/tw)^0.5", ef_term)
 
             # Determine which case of J10.3 applies
-            clip_dist = 3 / 4 * si.inch
+            clip_dist = 3 / 4
             connection_load_centroid = (
                 self._connection_length / 2 + clip_dist + self._end_plate_thickness
             )
@@ -1437,12 +1474,12 @@ class ShearYieldingCalculator:
             if hasattr(t_val, 'units'):
                 return t_val
             if isinstance(t_val, (int, float)):
-                return t_val * si.inch
+                return t_val
             return t_val
         elif hasattr(self.member, "tw"):
             tw_val = self.member.tw
             if isinstance(tw_val, (int, float)):
-                return tw_val * si.inch
+                return tw_val
             return tw_val
         raise AttributeError("Member does not have a recognizable thickness attribute.")
 
@@ -1535,7 +1572,7 @@ class PryingActionCalculator:
             self.b = (self.g - self.t2) / 2 
 
         # Derived geometric properties
-        self.d_prime = self.bolt_diameter + (1 / 16) * si.inch # Effective hole diameter
+        self.d_prime = self.bolt_diameter + (1 / 16) # Effective hole diameter
         self.b_prime = self.b - self.bolt_diameter / 2
         self.a_prime = min(self.a,1.25 * self.b) + self.bolt_diameter / 2
 
@@ -1554,10 +1591,10 @@ class PryingActionCalculator:
         self.n_bolts = self.n_rows * self.n_columns
 
         # This Values are hardcoded and will be updated later
-        self.shear_force = 319 * si.kip
-        self.tension_force = 176 * si.kip
-        self.Fnt_prime = BoltShearCalculator(self.connection).calculate_capacity_fnt_modified(self.shear_force ,debug=True)
-        self.B =  self.Fnt_prime* 0.75 * self.bolt_area
+        self.shear_force = 319
+        self.tension_force = 176
+        self.Fnt_prime = BoltShearCalculator(self.connection).calculate_capacity_fnt_modified(self.shear_force, debug=True)
+        self.B = self.Fnt_prime * 0.75 * self.bolt_area
 
     def _get_prying_properties(self, member: Any) -> dict:
         """
@@ -1636,7 +1673,7 @@ class PryingActionCalculator:
         finally:
             logger.display()
     
-    def _calculate_t_req(self, debug: bool = False) -> si.inch:
+    def _calculate_t_req(self, debug: bool = False):
         """
         Calculates the required thickness (t_req) to eliminate prying action.
         """
@@ -1656,9 +1693,9 @@ class PryingActionCalculator:
 
             if denominator == 0:
                 logger.add_calculation("Condition", "Denominator is zero, returning infinity.")
-                return float('inf') * si.inch
+                return float('inf')
 
-            t_req = ((numerator / denominator)**0.5).to('inch')
+            t_req = (numerator / denominator)**0.5
             logger.add_calculation("t_req Formula", "sqrt( (4 * B * b') / (p * Fy) )")
             logger.add_output("Required Thickness (t_req)", t_req)
             return t_req
@@ -1718,7 +1755,7 @@ class PryingActionCalculator:
         finally:
             logger.display()
 
-    def calculate_bolt_tension_with_prying(self) -> si.kip:
+    def calculate_bolt_tension_with_prying(self):
         """
         Calculates the total tension in the bolt, including prying force.
         T_total = T_req + Q
@@ -1761,7 +1798,7 @@ class WeldCalculator:
         self.fu_weld = max(self.f_avg *1.25 ,self.f_peak)
         self.angle = math.atan(self.fa/ self.fv) if self.fv != 0 else 0
         self.strength_increase = 1+0.5*math.sin(self.angle)**1.5
-    def calculate_min_thickness(self, debug: bool = False) -> si.inch:
+    def calculate_min_thickness(self, debug: bool = False):
         """
         Calculates the minimum thickness of the weld based on the shear and axial forces.
         Returns the minimum thickness in inches.
