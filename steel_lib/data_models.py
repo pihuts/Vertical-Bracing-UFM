@@ -181,54 +181,7 @@ class BeamColumnTransferredForce:
     shear: si.kip
     normal: si.kip
 
-@dataclass(frozen=True)
-class AppliedLoads:
-    """
-    A single, immutable container for all initial and calculated loads.
-    Should be constructed using one of its factory classmethods.
-    """
-    # Initial Design Loads
-    initial_brace_load: si.kip
-    initial_beam_shear: si.kip
-    initial_transfer_force: si.kip
 
-    # Calculated Interface Forces
-    gusset_to_column_shear: si.kip
-    gusset_to_column_normal: si.kip
-    gusset_to_beam_shear: si.kip
-    gusset_to_beam_normal: si.kip
-
-    @classmethod
-    def from_ufm(
-        cls,
-        design_loads: "DesignLoads", # We'll define this helper next
-        multipliers: "LoadMultipliers"
-    ) -> AppliedLoads:
-        """
-        Factory method to create an AppliedLoads object using the
-        Uniform Force Method calculations.
-        """
-        # Perform the load distribution calculations here
-        vuc = multipliers.vertical_force_column_interface * design_loads.Pu
-        vub = multipliers.vertical_force_beam_interface * design_loads.Pu
-        huc = multipliers.horizontal_force_column_interface * design_loads.Pu
-        hub = multipliers.horizontal_force_beam_interface * design_loads.Pu
-        
-        # Add Aub and Vu to the column interface forces
-        total_column_shear = huc + design_loads.Vu
-        total_column_normal = vuc + design_loads.Aub
-        total_column_shear = huc 
-        total_column_normal = vuc 
-
-        return cls(
-            initial_brace_load=design_loads.Pu,
-            initial_beam_shear=design_loads.Vu,
-            initial_transfer_force=design_loads.Aub,
-            gusset_to_column_shear=total_column_shear,
-            gusset_to_column_normal=total_column_normal,
-            gusset_to_beam_shear=hub,
-            gusset_to_beam_normal=vub,
-        )
 
 
 from typing import Union
