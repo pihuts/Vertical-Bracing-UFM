@@ -1039,13 +1039,13 @@ class ConnectionAnalysis:
         n_col = self.config.n_columns
         angle_rad = self.config.angle
 
-        beam_half_depth = beam_depth / 2
-        support_half_depth = support_depth / 2
-        beta = edge_dist + ((n_col - 1) * col_spacing) / 2
-        alpha = (beam_half_depth + beta) * math.tan(angle_rad) - support_half_depth
+        self.beam_half_depth = beam_depth / 2
+        self.support_half_depth = support_depth / 2
+        self.beta = edge_dist + ((n_col - 1) * col_spacing) / 2
+        self.alpha = (self.beam_half_depth + self.beta) * math.tan(angle_rad) - self.support_half_depth
         
         k_line_clearance = 0.75
-        horizontal_plate_length = 2 * alpha - 2 * end_plate_thickness - k_line_clearance
+        horizontal_plate_length = 2 * self.alpha - 2 * end_plate_thickness - k_line_clearance
 
         logger.add_input("Beam Depth", beam_depth)
         logger.add_input("Support Depth", support_depth)
@@ -1054,8 +1054,8 @@ class ConnectionAnalysis:
         logger.add_input("Column Spacing", col_spacing)
         logger.add_input("Number of Columns", n_col)
         logger.add_input("Connection Angle", f"{math.degrees(angle_rad):.2f} degrees")
-        logger.add_calculation("beta", beta)
-        logger.add_calculation("alpha", alpha)
+        logger.add_calculation("beta", self.beta)
+        logger.add_calculation("alpha", self.alpha)
         logger.add_calculation("Horizontal Plate Length (unrounded)", horizontal_plate_length)
 
         unrounded_vertical = (edge_dist * 2 + ((n_col - 1) * col_spacing) + 0.5)
@@ -1149,6 +1149,67 @@ class ConnectionAnalysis:
         logger.add_output("Admissible Distortion Force", admissible_force)
         logger.display()
         return admissible_force
+    def interface_loads(self, debug: bool = False):
+        """
+        Calculates the final loads on each interface after applying UFM multipliers
+        and considering admissible distortion forces.
+        """
+        logger = DebugLogger("Interface Loads Calculation", debug)
+        try:
+            m = self.ufm_multipliers
+            Pu = self.loads.Pu
+            Vu = self.loads.Vu
+            Aub = self.loads.Aub
+            Padm = self.admissible_distortion_force
+
+            logger.add_input("UFM Multipliers (m)", m)
+            logger.add_input("Factored Load (Pu)", Pu)
+            logger.add_input("Beam Shear (Vu)", Vu)
+            logger.add_input("Transfer Force (Aub)", Aub)
+            logger.add_input("Admissible Distortion Force (Padm)", Padm)
+            logger.add_input("Beta (from plate dimensions)", self.beta)
+            logger.add_input("Beam Half Depth (from plate dimensions)", self.beam_half_depth)
+
+            # Gusset Beam interface loads
+            gb_y_force = Pu * m.vertical_force_beam_interface
+            gb_x_force = Pu * m.horizontal_force_beam_interface
+            logger.add_calculation("Gusset-Beam Vertical Force (Pu * m.vertical_force_beam_interface)", gb_y_force)
+            logger.add_calculation("Gusset-Beam Horizontal Force (Pu * m.horizontal_force_beam_interface)", gb_x_force)
+
+            # Gusset Column interface loads
+            gc_y_force = Pu * m.vertical_force_column_interface
+            gc_x_force = Pu * m.horizontal_force_column_interface
+            logger.add_calculation("Gusset-Column Vertical Force (Pu * m.vertical_force_column_interface)", gc_y_force)
+            logger.add_calculation("Gusset-Column Horizontal Force (Pu * m.horizontal_force_column_interface)", gc_x_force)
+
+            # Beam Column interface loads
+            bc_x_admissible = Padm / (self.beta + self.beam_half_depth)
+            bc_x_force = gc_x_force - bc_x_admissible + Aub
+            bc_y_force = m.vertical_force_beam_interface + Vu
+            logger.add_calculation("Beam-Column Admissible Horizontal Force (Padm / (beta + beam_half_depth))", bc_x_admissible)
+            logger.add_calculation("Beam-Column Final Horizontal Force (gc_x_force - bc_x_admissible + Aub)", bc_x_force)
+            logger.add_calculation("Beam-Column Vertical Force (m.vertical_force_beam_interface + Vu)", bc_y_force)
+
+            gusset_beam_loads = DesignLoads(Pu=gb_y_force, Vu=gb_x_force)
+            gusset_column_loads = DesignLoads(Pu=gc_x_force, Vu=gc_y_force)
+            beam_column_interface_loads = DesignLoads(Pu=bc_x_force, Vu=bc_y_force)
+
+            logger.add_output("Gusset-Beam Interface Loads", gusset_beam_loads)
+            logger.add_output("Gusset-Column Interface Loads", gusset_column_loads)
+            logger.add_output("Beam-Column Interface Loads", beam_column_interface_loads)
+
+            return {
+                "Gusset_Beam": gusset_beam_loads,
+                "Gusset_Column": gusset_column_loads,
+                "Beam_Column_Interface": beam_column_interface_loads,
+            }
+        finally:
+            logger.display()
+  
+
+        
+
+
 class PlateTensileYieldingCalculator:
     """
     Calculates design tensile strength based on gross section yielding (AISC J4.1a).

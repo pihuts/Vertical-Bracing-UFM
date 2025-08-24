@@ -1,5 +1,6 @@
 from typing import Any, Dict, Union
 from .si_units import si
+from .data_models import DesignLoads
 
 class DebugLogger:
     """
@@ -42,14 +43,20 @@ class DebugLogger:
         Formats a value for display, converting force units to 'kip' for
         consistency.
         """
+        # Check if the value is a DesignLoads object
+        if isinstance(value, DesignLoads):
+            pu_str = self._format_value(value.Pu)
+            vu_str = self._format_value(value.Vu)
+            return f"DesignLoads(Pu={pu_str}, Vu={vu_str})"
+        
         if hasattr(value, 'units'):
             try:
                 # Try to convert to kip; if it works, it's a force.
-                return f"{value.to('kip'):.4f}"
+                return f"{value.to('kip'):.4f} kip"
             except Exception:  # Catches conversion errors if not a force
                 try:
                     # If not a force, format as a standard number
-                    return f"{value:.4f}"
+                    return f"{value:.4f} {value.units}"
                 except (TypeError, ValueError):
                     # Fallback for non-numeric unit objects
                     return str(value)
