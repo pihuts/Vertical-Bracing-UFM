@@ -172,6 +172,17 @@ class DesignLoads:
     Pu: si.kip = 0 * si.kip
     Vu: si.kip = 0 * si.kip
     Aub: si.kip = 0 * si.kip
+
+@dataclass(frozen=True)
+class GlobalLoads:
+    """Represents a generalized 6-component load vector."""
+    fx: si.kip = 0 * si.kip
+    fy: si.kip = 0 * si.kip
+    fz: si.kip = 0 * si.kip
+    mx: si.kip = 0 * si.kip
+    my: si.kip = 0 * si.kip
+    mz: si.kip = 0 * si.kip
+
 @dataclass(frozen=True)
 class BeamColumnTransferredForce:
     """
@@ -184,16 +195,19 @@ class BeamColumnTransferredForce:
 
 
 
-from typing import Union
+from typing import Union, Literal
 
-@dataclass(frozen=True)
+@dataclass
 class ConnectionEndpoint:
     """
     Represents one side of a connection, defining which member and which specific
-    part of that member is being connected.
+    part of that member is being connected. The loads attribute is populated
+    after the Connection is initialized.
     """
     member: Any
     component: ConnectionComponent = ConnectionComponent.TOTAL
+    role: Optional[Literal['BEAM', 'COLUMN', 'GIRDER', 'END_PLATE', 'SHEAR_PLATE', 'FLANGE_PLATE']] = None
+    loads: DesignLoads = field(default_factory=DesignLoads, init=False)
 
 @dataclass
 class Connection:
@@ -205,7 +219,61 @@ class Connection:
     member_b: ConnectionEndpoint
     connection_type: Literal["bolted", "welded"]
     configuration: Union["BoltConfiguration", "WeldConfiguration"]
+    global_loads: Optional[GlobalLoads] = None
     override_Ag: Optional[float] = None  # Allow manual override of gross area
+
+    def __post_init__(self):
+        """
+        Automatically transforms and assigns global loads to the respective
+        connection endpoints after the connection is initialized.
+        """
+        if self.global_loads:
+            self._transform_and_assign_loads()
+
+    def _transform_and_assign_loads(self):
+        """
+        Determines member roles and assigns the appropriate DesignLoads.
+        It prioritizes explicit roles and falls back to a heuristic based
+        on connection topology if roles are not provided.
+        """
+        # Step 1: Define transformation rules for each role
+        transformation_rules = {
+            'BEAM':       {'Pu': self.global_loads.fx, 'Vu': self.global_loads.fy},
+            'COLUMN':     {'Pu': self.global_loads.fy, 'Vu': self.global_loads.fx},
+            'GIRDER':     {'Pu': self.global_loads.fx, 'Vu': self.global_loads.fy},
+            'END_PLATE':  {'Pu': self.global_loads.fy, 'Vu': self.global_loads.fx},
+            'SHEAR_PLATE':{'Pu': self.global_loads.fx, 'Vu': self.global_loads.fy},
+        }
+
+        # Step 2: Assign loads based on explicit roles if they exist
+        # Check member_a
+        if self.member_a.role in transformation_rules:
+            self.member_a.loads = DesignLoads(**transformation_rules[self.member_a.role])
+        # Check member_b
+        if self.member_b.role in transformation_rules:
+            self.member_b.loads = DesignLoads(**transformation_rules[self.member_b.role])
+
+        # If both roles were provided and handled, the job is done.
+        if self.member_a.role and self.member_b.role:
+            return
+
+        # Step 3: Fallback to heuristic if one or both explicit roles are not provided
+        if not (self.member_a.role and self.member_b.role):
+            if self.member_a.component in [ConnectionComponent.WEB, ConnectionComponent.FLANGE]:
+                primary_member_endpoint = self.member_a
+                secondary_member_endpoint = self.member_b
+            elif self.member_b.component in [ConnectionComponent.WEB, ConnectionComponent.FLANGE]:
+                primary_member_endpoint = self.member_b
+                secondary_member_endpoint = self.member_a
+            else:
+                primary_member_endpoint = self.member_a
+                secondary_member_endpoint = self.member_b
+
+            # Apply transformations based on inferred roles, only if not explicitly set
+            if not primary_member_endpoint.role:
+                primary_member_endpoint.loads = DesignLoads(Pu=self.global_loads.fy, Vu=self.global_loads.fx)
+            if not secondary_member_endpoint.role:
+                secondary_member_endpoint.loads = DesignLoads(Pu=self.global_loads.fx, Vu=self.global_loads.fy)
 
 @dataclass
 class ConnectionFactory:
@@ -217,6 +285,8 @@ class ConnectionFactory:
         member_b: Any,
         component_a: ConnectionComponent = ConnectionComponent.TOTAL,
         component_b: ConnectionComponent = ConnectionComponent.TOTAL,
+        role_a: Optional[str] = None,
+        role_b: Optional[str] = None,
         *args, **kwargs
     ) -> Connection:
         """
@@ -224,15 +294,17 @@ class ConnectionFactory:
         connected components.
         """
         override_ag = kwargs.pop('override_Ag', None)
-        endpoint_a = ConnectionEndpoint(member=member_a, component=component_a)
-        endpoint_b = ConnectionEndpoint(member=member_b, component=component_b)
+        global_loads = kwargs.pop('global_loads', None)
+        endpoint_a = ConnectionEndpoint(member=member_a, component=component_a, role=role_a)
+        endpoint_b = ConnectionEndpoint(member=member_b, component=component_b, role=role_b)
 
         return Connection(
             member_a=endpoint_a,
             member_b=endpoint_b,
             connection_type="bolted",
             configuration=BoltConfiguration(*args, **kwargs),
-            override_Ag=override_ag
+            override_Ag=override_ag,
+            global_loads=global_loads
         )
 
     @staticmethod
@@ -241,6 +313,8 @@ class ConnectionFactory:
         member_b: Any,
         component_a: ConnectionComponent = ConnectionComponent.TOTAL,
         component_b: ConnectionComponent = ConnectionComponent.TOTAL,
+        role_a: Optional[str] = None,
+        role_b: Optional[str] = None,
         *args, **kwargs
     ) -> Connection:
         """
@@ -248,13 +322,15 @@ class ConnectionFactory:
         connected components.
         """
         override_ag = kwargs.pop('override_Ag', None)
-        endpoint_a = ConnectionEndpoint(member=member_a, component=component_a)
-        endpoint_b = ConnectionEndpoint(member=member_b, component=component_b)
+        global_loads = kwargs.pop('global_loads', None)
+        endpoint_a = ConnectionEndpoint(member=member_a, component=component_a, role=role_a)
+        endpoint_b = ConnectionEndpoint(member=member_b, component=component_b, role=role_b)
 
         return Connection(
             member_a=endpoint_a,
             member_b=endpoint_b,
             connection_type="welded",
             configuration=WeldConfiguration(*args, **kwargs),
-            override_Ag=override_ag
+            override_Ag=override_ag,
+            global_loads=global_loads
         )
