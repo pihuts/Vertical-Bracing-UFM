@@ -220,11 +220,12 @@ class BoltShearCalculator:
     """
     Calculates the shear strength of a single bolt based on its properties.
     """
-    def __init__(self, connection: Connection):
+    def __init__(self, connection: Connection, loads: Optional[DesignLoads] = None):
         """
         Initializes the calculator with a Connection object.
         Assumes a 'bolted' connection configuration.
         """
+        self.loads = loads
         self.bolt_config: BoltConfiguration = connection.configuration
         self.bolt_diameter = self.bolt_config.bolt_diameter
         self.bolt_area = self._calculate_bolt_area()
@@ -238,7 +239,7 @@ class BoltShearCalculator:
 
     def calculate_capacity_fnv(
         self,
-        number_of_shear_planes: int,
+        number_of_shear_planes: int=1,
         resistance_factor: float = 0.75,
         debug: bool = False,
     ) -> float:
@@ -270,7 +271,7 @@ class BoltShearCalculator:
         
     def calculate_capacity_fnt(
         self,
-        number_of_shear_planes: int,
+        number_of_shear_planes: int = 1,
         resistance_factor: float = 0.75,
         debug: bool = False,
     ) -> float:
@@ -295,10 +296,16 @@ class BoltShearCalculator:
         logger.display()
         return design_strength
 
-    def check_dcr_fnt(self, demand_force: si.kip, **kwargs) -> float:
+    def check_dcr_fnt(self, **kwargs) -> float:
         """Calculates the demand-to-capacity ratio for Fnt."""
-        capacity = self.calculate_capacity_fnt(**kwargs)
-        return check_dcr(capacity, abs(demand_force), "Bolt Tensile Strength", **kwargs)
+        if self.loads is None:
+            raise ValueError("DesignLoads must be provided to check_dcr_fnt.")
+            
+        if self.loads.Vu:
+            capacity = self.calculate_capacity_fnt_modified(demand_force_shear=self.loads.Vu,**kwargs)
+        else:
+            capacity = self.calculate_capacity_fnt(**kwargs)
+        return check_dcr(capacity, abs(self.loads.Pu)/self.no_bolts, "Bolt Tensile Strength", **kwargs)
     def calculate_capacity_fnt_modified(
         self,demand_force_shear: si.kip,
         resistance_factor: float = 0.75,
@@ -337,10 +344,8 @@ class BoltShearCalculator:
         logger.add_calculation("Modified F'nt (Nominal, before cap)", modified_fnt_nominal)
 
         # The result cannot be greater than the nominal tensile stress Fnt
-        final_fnt_modified = min(modified_fnt_nominal, fnt)
-        logger.add_output("Final Modified Tensile Stress (F'nt)", final_fnt_modified)
-        final_fnt_modified
-        
+        final_fnt_modified = min(modified_fnt_nominal, fnt) * self.bolt_area * resistance_factor
+        logger.add_output("Final Modified Tensile Stress (F'nt)", final_fnt_modified)        
         logger.display()
         return final_fnt_modified
 class TensileYieldingCalculator:
@@ -716,7 +721,7 @@ class ConnectionCapacityCalculator:
         """
         # 1. Get the shear capacity of a single bolt (this is an upper limit)
         # Create a new Connection object to pass to the shear checker
-        shear_checker = BoltShearCalculator(self.connection)
+        shear_checker = BoltShearCalculator(self.connection,loads=self.loads)
         bolt_shear_strength = shear_checker.calculate_capacity_fnv(number_of_shear_planes, resistance_factor=0.75) # Use nominal for comparison
 
         # 2. Calculate clear distances
@@ -1162,13 +1167,16 @@ class ConnectionAnalysis:
             Aub = self.loads.Aub
             Padm = self.admissible_distortion_force
 
-            logger.add_input("UFM Multipliers (m)", m)
             logger.add_input("Factored Load (Pu)", Pu)
             logger.add_input("Beam Shear (Vu)", Vu)
             logger.add_input("Transfer Force (Aub)", Aub)
             logger.add_input("Admissible Distortion Force (Padm)", Padm)
             logger.add_input("Beta (from plate dimensions)", self.beta)
             logger.add_input("Beam Half Depth (from plate dimensions)", self.beam_half_depth)
+            logger.add_input("UFM Multiplier: Vertical Force Column Interface", m.vertical_force_column_interface)
+            logger.add_input("UFM Multiplier: Vertical Force Beam Interface", m.vertical_force_beam_interface)
+            logger.add_input("UFM Multiplier: Horizontal Force Column Interface", m.horizontal_force_column_interface)
+            logger.add_input("UFM Multiplier: Horizontal Force Beam Interface", m.horizontal_force_beam_interface)
 
             # Gusset Beam interface loads
             gb_y_force = Pu * m.vertical_force_beam_interface
@@ -1185,7 +1193,7 @@ class ConnectionAnalysis:
             # Beam Column interface loads
             bc_x_admissible = Padm / (self.beta + self.beam_half_depth)
             bc_x_force = gc_x_force - bc_x_admissible + Aub
-            bc_y_force = m.vertical_force_beam_interface + Vu
+            bc_y_force = gb_y_force + Vu
             logger.add_calculation("Beam-Column Admissible Horizontal Force (Padm / (beta + beam_half_depth))", bc_x_admissible)
             logger.add_calculation("Beam-Column Final Horizontal Force (gc_x_force - bc_x_admissible + Aub)", bc_x_force)
             logger.add_calculation("Beam-Column Vertical Force (m.vertical_force_beam_interface + Vu)", bc_y_force)
@@ -1194,9 +1202,12 @@ class ConnectionAnalysis:
             gusset_column_loads = DesignLoads(Pu=gc_x_force, Vu=gc_y_force)
             beam_column_interface_loads = DesignLoads(Pu=bc_x_force, Vu=bc_y_force)
 
-            logger.add_output("Gusset-Beam Interface Loads", gusset_beam_loads)
-            logger.add_output("Gusset-Column Interface Loads", gusset_column_loads)
-            logger.add_output("Beam-Column Interface Loads", beam_column_interface_loads)
+            logger.add_output("Gusset-Beam Interface Loads Pu", gusset_beam_loads.Pu)
+            logger.add_output("Gusset-Beam Interface Loads Vu", gusset_beam_loads.Vu)
+            logger.add_output("Gusset-Column Interface Loads Pu", gusset_column_loads.Pu)
+            logger.add_output("Gusset-Column Interface Loads Vu", gusset_column_loads.Vu)
+            logger.add_output("Beam-Column Interface Loads Pu", beam_column_interface_loads.Pu)
+            logger.add_output("Beam-Column Interface Loads Vu", beam_column_interface_loads.Vu)
 
             return {
                 "Gusset_Beam": gusset_beam_loads,
@@ -1515,9 +1526,10 @@ class ShearYieldingCalculator:
     This class is designed to handle both L and U patterns for block shear calculations.
     """
 
-    def __init__(self, endpoint: "ConnectionEndpoint", connection: Connection):
+    def __init__(self, endpoint: "ConnectionEndpoint", connection: Connection,loads : DesignLoads):
         self.endpoint = endpoint
         self.member = endpoint.member
+        self.loads = loads
         self.connection = connection # Keep the full connection for context
         self.config: Union[BoltConfiguration, WeldConfiguration] = connection.configuration
         self.connection_type = connection.connection_type
@@ -1572,10 +1584,10 @@ class ShearYieldingCalculator:
 
         return design_capacity
 
-    def check_dcr(self, demand_force: si.kip, **kwargs) -> float:
+    def check_dcr(self, **kwargs) -> float:
         """Calculates the demand-to-capacity ratio."""
         capacity = self.calculate_capacity(**kwargs)
-        return check_dcr(capacity, abs(demand_force), f"Shear Yielding ({self.endpoint.component.name})", **kwargs)
+        return check_dcr(capacity, abs(self.loads.Vu), f"Shear Yielding ({self.endpoint.component.name})", **kwargs)
 
 
 class PryingActionCalculator:
@@ -1584,7 +1596,7 @@ class PryingActionCalculator:
     AISC Manual Part 9.
     """
 
-    def __init__(self, member_1: Any, member_2: Any, connection: Connection):
+    def __init__(self, member_1: Any, member_2: Any, connection: Connection, loads: Optional[DesignLoads] = None):
         """
         Initializes the calculator with the plate and connection objects.
         """
@@ -1602,6 +1614,7 @@ class PryingActionCalculator:
         self.t = props_1['t']
         self.width = props_1['width']
         self.plate_Fu = props_1['Fu'] # Store Fu for later use
+        self.loads = loads # Store loads
 
         self.width_2 = props_2['width']  # Width of the plate
 
@@ -1651,11 +1664,15 @@ class PryingActionCalculator:
         self.n_columns = self.config.n_columns
         self.n_bolts = self.n_rows * self.n_columns
 
-        # This Values are hardcoded and will be updated later
-        self.shear_force = 319
-        self.tension_force = 176
-        self.Fnt_prime = BoltShearCalculator(self.connection).calculate_capacity_fnt_modified(self.shear_force, debug=True)
-        self.B = self.Fnt_prime * 0.75 * self.bolt_area
+        # Initialize shear and tension forces
+        self.shear_force = self.loads.Vu if self.loads else None
+        self.tension_force = self.loads.Pu if self.loads else None
+
+        # Calculate B only if loads are provided
+        self.B = None
+        if self.loads:
+            self.B = BoltShearCalculator(self.connection, loads=self.loads).calculate_capacity_fnt_modified(self.shear_force, debug=True)
+         
 
     def _get_prying_properties(self, member: Any) -> dict:
         """
@@ -1702,6 +1719,9 @@ class PryingActionCalculator:
         """
         logger = DebugLogger("Alpha Prime Calculation", debug)
         try:
+            if self.B is None:
+                logger.add_calculation("Condition", "self.B is None, cannot calculate alpha_prime.")
+                raise ValueError("Cannot calculate alpha_prime: Bolt strength (B) is not available.")
             if self.B == 0:
                 logger.add_calculation("Condition", "B is zero, returning infinity.")
                 return float('inf')
@@ -1740,8 +1760,12 @@ class PryingActionCalculator:
         """
         logger = DebugLogger("Required Thickness (t_req) Calculation", debug)
         try:
+            if self.B is None:
+                logger.add_calculation("Condition", "self.B is None, cannot calculate t_req.")
+                raise ValueError("Cannot calculate t_req: Bolt strength (B) is not available.")
             logger.add_input("Available Bolt Strength (B)", self.B)
             logger.add_input("Distance b'", self.b_prime)
+            logger.add_input("Distance a'", self.a_prime)
             logger.add_input("Tributary Length (p)", self.p)
             logger.add_input("Plate Fu", self.plate_Fu)
             logger.add_input("Resistance Factor (phi)", 0.9)
@@ -1821,6 +1845,8 @@ class PryingActionCalculator:
         Calculates the total tension in the bolt, including prying force.
         T_total = T_req + Q
         """
+        if self.B is None:
+            raise ValueError("Cannot calculate bolt tension: Bolt strength (B) is not available.")
         Q = self.calculate_Q(debug=False) # Debugging is handled in the main check_dcr
         return self.B * Q
 
@@ -1834,6 +1860,9 @@ class PryingActionCalculator:
         t_req = self._calculate_t_req(debug=debug)
         Q = self.calculate_Q(debug=debug)
         
+        if self.B is None or self.tension_force is None:
+            raise ValueError("Cannot calculate DCR for prying action: Bolt strength (B) or tension force is not available.")
+
         available_strength = self.B * Q
         design_capacity = (resistance_factor * available_strength).to('kip')
         

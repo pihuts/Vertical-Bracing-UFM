@@ -1,6 +1,6 @@
 from typing import Any, Dict, Union
 from .si_units import si
-from .data_models import DesignLoads
+from .data_models import DesignLoads, LoadMultipliers
 
 class DebugLogger:
     """
@@ -49,6 +49,20 @@ class DebugLogger:
             vu_str = self._format_value(value.Vu)
             return f"DesignLoads(Pu={pu_str}, Vu={vu_str})"
         
+        if isinstance(value, LoadMultipliers):
+            vfc_str = self._format_value(value.vertical_force_column_interface)
+            vfb_str = self._format_value(value.vertical_force_beam_interface)
+            hfc_str = self._format_value(value.horizontal_force_column_interface)
+            hfb_str = self._format_value(value.horizontal_force_beam_interface)
+            return (
+                f"LoadMultipliers(\n"
+                f"        vertical_force_column_interface={vfc_str},\n"
+                f"        vertical_force_beam_interface={vfb_str},\n"
+                f"        horizontal_force_column_interface={hfc_str},\n"
+                f"        horizontal_force_beam_interface={hfb_str}\n"
+                f"    )"
+            )
+
         if hasattr(value, 'units'):
             try:
                 # Try to convert to kip; if it works, it's a force.
