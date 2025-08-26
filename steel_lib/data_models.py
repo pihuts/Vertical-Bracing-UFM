@@ -182,6 +182,7 @@ class GlobalLoads:
     mx: si.kip = 0 * si.kip
     my: si.kip = 0 * si.kip
     mz: si.kip = 0 * si.kip
+    direct_load : si.kip = 0 * si.kip # this is for cases like bracing
 
 @dataclass(frozen=True)
 class BeamColumnTransferredForce:
@@ -243,6 +244,7 @@ class Connection:
             'GIRDER':     {'Pu': self.global_loads.fx, 'Vu': self.global_loads.fy},
             'END_PLATE':  {'Pu': self.global_loads.fy, 'Vu': self.global_loads.fx},
             'SHEAR_PLATE':{'Pu': self.global_loads.fx, 'Vu': self.global_loads.fy},
+            'BRACING':   {'Pu': self.global_loads.direct_load, 'Vu': 0 * si.kip},
         }
 
         # Step 2: Assign loads based on explicit roles if they exist
