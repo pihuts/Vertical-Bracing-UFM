@@ -129,7 +129,6 @@ class BoltConfiguration:
     edge_distance_horizontal: si.inch 
     bolt_diameter: si.inch 
     bolt_grade: BoltGrade 
-    material: Material
     angle: float = 0.0
     n_rows: int = 1  # Default to 1 row if not specified
     n_columns: int = 1  # Default to 1 column if not specified
@@ -244,7 +243,7 @@ class Connection:
             'GIRDER':     {'Pu': self.global_loads.fx, 'Vu': self.global_loads.fy},
             'END_PLATE':  {'Pu': self.global_loads.fy, 'Vu': self.global_loads.fx},
             'SHEAR_PLATE':{'Pu': self.global_loads.fx, 'Vu': self.global_loads.fy},
-            'BRACING':   {'Pu': self.global_loads.direct_load, 'Vu': 0 * si.kip},
+            'BRACE':   {'Pu': self.global_loads.direct_load, 'Vu': 0 * si.kip},
         }
 
         # Step 2: Assign loads based on explicit roles if they exist
@@ -287,8 +286,6 @@ class ConnectionFactory:
         member_b: Any,
         component_a: ConnectionComponent = ConnectionComponent.TOTAL,
         component_b: ConnectionComponent = ConnectionComponent.TOTAL,
-        role_a: Optional[str] = None,
-        role_b: Optional[str] = None,
         *args, **kwargs
     ) -> Connection:
         """
@@ -297,6 +294,8 @@ class ConnectionFactory:
         """
         override_ag = kwargs.pop('override_Ag', None)
         global_loads = kwargs.pop('global_loads', None)
+        role_a = member_a.Role 
+        role_b = member_b.Role 
         endpoint_a = ConnectionEndpoint(member=member_a, component=component_a, role=role_a)
         endpoint_b = ConnectionEndpoint(member=member_b, component=component_b, role=role_b)
 

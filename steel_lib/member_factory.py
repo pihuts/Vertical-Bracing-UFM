@@ -15,7 +15,7 @@ class MemberFactory:
     @staticmethod
     def create_steelpy_member(
         section_class: Type, section_name: str, material: Material, shape_type: str,
-        loading_condition: int = 1,length = None,
+        role:str,loading_condition: int = 1,length = None,
     ) -> Any:
         """
         Creates a steelpy member, assigns material and loading properties,
@@ -32,6 +32,7 @@ class MemberFactory:
         section.add_property("Fu", material.Fu)
         section.add_property("E", material.E)
         section.add_property("Type", shape_type)
+        section.add_property("Role", role)
         if length is not None:
             section.add_property("length", length)
         section.loading_condition = loading_condition

@@ -220,12 +220,12 @@ class BoltShearCalculator:
     """
     Calculates the shear strength of a single bolt based on its properties.
     """
-    def __init__(self, connection: Connection, loads: Optional[DesignLoads] = None):
+    def __init__(self, connection: Connection):
         """
         Initializes the calculator with a Connection object.
         Assumes a 'bolted' connection configuration.
         """
-        self.loads = loads
+        self.loads = connection
         self.bolt_config: BoltConfiguration = connection.configuration
         self.bolt_diameter = self.bolt_config.bolt_diameter
         self.bolt_area = self._calculate_bolt_area()
