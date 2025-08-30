@@ -229,6 +229,7 @@ class result:
     def __post_init__(self):
         self.remarks = remarks.PASS if self.dcr <= 1.0 else remarks.FAIL 
 
+
 # @dataclass
 # class Connection:
 #     """

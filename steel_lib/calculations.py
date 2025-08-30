@@ -2,7 +2,6 @@ import math
 from typing import Any, Literal, Union, Dict, Optional, Type
 from dataclasses import dataclass, field
 from .si_units import si
-from .connection_factory import Connection
 from .data_models import (
     BoltConfiguration,
     Plate,

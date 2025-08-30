@@ -7,17 +7,6 @@ from steel_lib.data_models import (
     BoltConfiguration,
     WeldConfiguration,DesignLoads,GlobalLoads,result
 )
-from steel_lib.calculations import (
-    ConnectionCapacityCalculator,
-    BlockShearCalculator,
-    PryingActionCalculator,
-    ShearYieldingCalculator,
-    WebLocalYieldingCalculator,
-    CompressionBucklingCalculator,
-    TensileRuptureCalculator,
-    TensileYieldingCalculator,LimitState
-
-)
 from steel_lib import si
 @dataclass
 class Connection:
@@ -87,7 +76,7 @@ class Connection:
                 secondary_member_endpoint.loads = DesignLoads(Pu=self.global_loads.fx, Vu=self.global_loads.fy)
         
     @classmethod
-    def check_limit_states(cls,limit_states : LimitState):
+    def check_limit_states(cls,limit_states ):
         """
         Checks if the connection meets the required limit states based on the
         assigned loads and configuration.
