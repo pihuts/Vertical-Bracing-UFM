@@ -174,6 +174,7 @@ class DesignLoads:
     Pu: si.kip = 0 * si.kip
     Vu: si.kip = 0 * si.kip
     Aub: si.kip = 0 * si.kip
+    out_of_plane_force: si.kip = 0 * si.kip
 
 @dataclass(frozen=True)
 class GlobalLoads:
@@ -211,6 +212,9 @@ class ConnectionEndpoint:
     component: ConnectionComponent = ConnectionComponent.TOTAL
     role: Optional[Literal['BEAM', 'COLUMN', 'GIRDER', 'END_PLATE', 'SHEAR_PLATE', 'FLANGE_PLATE']] = None
     loads: DesignLoads = field(default_factory=DesignLoads, init=False)
+    connection_configuration: Optional[Union[BoltConfiguration, WeldConfiguration]] = None
+    design_method: str = "LRFD"  # Default design method
+    shear_condition: int = 1  # Default to single shear
 class remarks(Enum):
     PASS = auto()
     FAIL = auto()
@@ -224,7 +228,7 @@ class result:
     demand: float
     capacity: float
     dcr: float
-    remarks: str
+    remarks: str = "WIP"
     details: Optional[str] = None
     def __post_init__(self):
         self.remarks = remarks.PASS if self.dcr <= 1.0 else remarks.FAIL 
@@ -353,3 +357,73 @@ class result:
 #             override_Ag=override_ag,
 #             global_loads=global_loads
 #         )
+
+@dataclass
+class Connection:
+    """
+    A unified connection class that explicitly defines the two members and their
+    respective components being joined.
+    """
+    member_a: ConnectionEndpoint
+    member_b: ConnectionEndpoint
+    global_loads: Optional[GlobalLoads] = None
+    override_Ag: Optional[float] = None  # Allow manual override of gross area
+    
+    def __post_init__(self):
+        """
+        Automatically transforms and assigns global loads to the respective
+        connection endpoints after the connection is initialized.
+        """
+        if self.global_loads:
+            self._transform_and_assign_loads()
+        shear_condition = max(self.member_a.member.loading_condition, self.member_b.member.loading_condition)
+        self.member_a.shear_condition = shear_condition
+        self.member_b.shear_condition = shear_condition
+
+
+    def _transform_and_assign_loads(self):
+        """
+        Determines member roles and assigns the appropriate DesignLoads.
+        It prioritizes explicit roles and falls back to a heuristic based
+        on connection topology if roles are not provided.
+        """
+        # Step 1: Define transformation rules for each role
+        transformation_rules = {
+            'BEAM':       {'Pu': self.global_loads.fx, 'Vu': self.global_loads.fy},
+            'COLUMN':     {'Pu': self.global_loads.fy, 'Vu': self.global_loads.fx},
+            'GIRDER':     {'Pu': self.global_loads.fx, 'Vu': self.global_loads.fy,'out_of_plane_force': self.global_loads.fz},
+            'END_PLATE':  {'Pu': self.global_loads.fy, 'Vu': self.global_loads.fx},
+            'SHEAR_PLATE':{'Pu': self.global_loads.fx, 'Vu': self.global_loads.fy},
+            'BRACE':   {'Pu': self.global_loads.direct_load, 'Vu': 0 * si.kip},
+        }
+
+        # Step 2: Assign loads based on explicit roles if they exist
+        # Check member_a
+        if self.member_a.role in transformation_rules:
+            self.member_a.loads = DesignLoads(**transformation_rules[self.member_a.role])
+        # Check member_b
+        if self.member_b.role in transformation_rules:
+            self.member_b.loads = DesignLoads(**transformation_rules[self.member_b.role])
+
+        # If both roles were provided and handled, the job is done.
+        if self.member_a.role and self.member_b.role:
+            return
+
+        # Step 3: Fallback to heuristic if one or both explicit roles are not provided
+        if not (self.member_a.role and self.member_b.role):
+            if self.member_a.component in [ConnectionComponent.WEB, ConnectionComponent.FLANGE]:
+                primary_member_endpoint = self.member_a
+                secondary_member_endpoint = self.member_b
+            elif self.member_b.component in [ConnectionComponent.WEB, ConnectionComponent.FLANGE]:
+                primary_member_endpoint = self.member_b
+                secondary_member_endpoint = self.member_a
+            else:
+                primary_member_endpoint = self.member_a
+                secondary_member_endpoint = self.member_b
+
+            # Apply transformations based on inferred roles, only if not explicitly set
+            if not primary_member_endpoint.role:
+                primary_member_endpoint.loads = DesignLoads(Pu=self.global_loads.fy, Vu=self.global_loads.fx)
+            if not secondary_member_endpoint.role:
+                secondary_member_endpoint.loads = DesignLoads(Pu=self.global_loads.fx, Vu=self.global_loads.fy)
+        

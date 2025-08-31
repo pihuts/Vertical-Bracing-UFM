@@ -11,14 +11,15 @@ from .data_models import (
     
     ConnectionComponent,
     DesignLoads,
-    BeamColumnTransferredForce,result
+    BeamColumnTransferredForce,result,Connection,ConnectionEndpoint
 )
 from .debugging import DebugLogger
 from abc import ABC, abstractmethod
+from handcalcs.decorator import handcalc
 # Define a type hint for numbers for clarity
 Numeric = Union[int, float]
-
-
+jupyter_format = "long"
+pi = math.pi
 def get_applicable_gross_area(endpoint: "ConnectionEndpoint", connection: Connection) -> float:
     """
     Determines the applicable gross area (Ag) based on the connection endpoint.
@@ -61,7 +62,27 @@ def get_applicable_gross_area(endpoint: "ConnectionEndpoint", connection: Connec
 
     return applicable_area
 
+def get_load(member: "Connection", load_type: str) -> si:
+    """
+    Retrieves the specified load type from the connection's members.
+    If the load is not defined or the loads attribute is missing, it defaults to zero.
 
+    Args:
+        connection (Connection): The connection object containing loads.
+        load_type (str): The type of load to retrieve (e.g., "Vu", "Pu", "Mu").
+
+    Returns:
+        dict[str, float]: A dictionary with the specified loads for the primary and secondary members.
+    """
+    def safe_get_load(member, load_type) -> float:
+        """Safely retrieves the specified load from a member's loads, defaulting to zero if not available."""
+        if hasattr(member, "loads") and hasattr(member.loads, load_type):
+            return getattr(member.loads, load_type, 0.0)
+        return 0.0
+
+    return safe_get_load(member, load_type)
+
+   
 def get_applicable_thickness(endpoint: "ConnectionEndpoint") -> float:
     """
     Determines the applicable thickness based on the connection endpoint.
@@ -237,27 +258,36 @@ class LimitState(ABC):
         Must be implemented by all subclasses.
         """
         pass
+@handcalc(jupyter_display=True, precision=3, override=jupyter_format)
 def area_circular_bolt(diameter: si.inch) :
     """Calculates the gross area of a circular bolt."""
-    return (diameter**2 / 4) * math.pi
+    A_bolt = diameter**2 / 4 * pi
+    return A_bolt
 
 class BoltShearCalculator(LimitState):
     """
     Calculates the shear strength of a single bolt based on its properties.
     """
-    def __init__(self, connection: Connection):
+    def __init__(self, endpoint:ConnectionEndpoint,debug: bool = False):
         """
         Initializes the calculator with a Connection object.
         Assumes a 'bolted' connection configuration.
         """
         self.name = "Bolt Shear Strength"
-        self.loads = connection.loads
-        self.connection = connection
-        self.bolt_config: BoltConfiguration = connection.configuration
+        self.endpoint = endpoint
+        self.bolt_config: BoltConfiguration = endpoint.connection_configuration
         self.bolt_area = area_circular_bolt(self.bolt_config.bolt_diameter)
         self.fnv = self.bolt_config.bolt_grade.Fnv
         self.no_bolts = self.bolt_config.n_rows * self.bolt_config.n_columns
-        self.design_method = connection.design_method
+        self.design_method = endpoint.design_method
+        self._debug = debug
+
+    @property
+    def demand_loads(self) -> float:
+        """Returns the shear demand on the bolt."""
+        self.loads_vu = get_load(self.endpoint, "Vu")
+        self.loads_pu = get_load(self.endpoint, "Pu")
+        return ((self.loads_vu**2 + self.loads_pu**2) **0.5).to("kip")/self.no_bolts
     @property
     def resistance_factor(self) -> float:
         """Returns the resistance factor for bolt shear."""
@@ -265,41 +295,41 @@ class BoltShearCalculator(LimitState):
             return 0.75
         elif self.design_method == "ASD":
             return 2
-
-
-    def calculate_capacity(
-        self,
-        debug: bool = False,
+        
+    @handcalc(jupyter_display=True, precision=3, override=jupyter_format)
+    def calculations(self,F_nv: float,A_bolt: float,N_shear_planes: int,phi: float):
+        nominal_strength = F_nv * A_bolt * N_shear_planes
+        design_strength = phi * nominal_strength
+        return design_strength
+    def calculate_capacity(self
     ) -> float:
         """
         Calculates the design shear strength of the bolt.
         """
+        debug = self._debug
         logger = DebugLogger("Bolt Shear Strength", debug)
         logger.add_input("Nominal Shear Stress (Fnv)", self.fnv)
-        logger.add_input("Bolt Diameter (d)", self.bolt_diameter)
         logger.add_input("Bolt Area (Ab)", self.bolt_area)
         
-        number_of_shear_planes = self.connection.shear_condition
+        number_of_shear_planes = self.endpoint.shear_condition
         resistance_factor = self.resistance_factor
         logger.add_input("Number of Shear Planes", number_of_shear_planes)
         logger.add_input("Resistance Factor (phi)", resistance_factor)
         # Nominal strength (Rn) = Fnv * Ab * Ns
-        nominal_strength = self.fnv * self.bolt_area * number_of_shear_planes
+        design_strength = self.calculations(self.fnv,self.bolt_area,number_of_shear_planes,resistance_factor)
         logger.add_calculation("Nominal Strength (Rn = Fnv * Ab * Ns)", nominal_strength)
 
         # Design strength (phiRn) = phi * Rn
-        design_strength = resistance_factor * nominal_strength
+
         logger.add_output("Design Strength (phiRn)", design_strength)
 
         logger.display()
         return design_strength
 
-    def check_dcr(self,debug:bool = False) -> float:
+    def check_dcr(self) -> float:
         """Calculates the demand-to-capacity ratio for Fnv."""
-        if self.loads is None:
-            raise ValueError("DesignLoads must be provided to check_dcr_fnv.")
-        demand_force = self.loads.Vu if self.loads and self.loads.Vu else 0.0
-        capacity = self.calculate_capacity_fnv(debug)
+        demand_force = self.demand_loads
+        capacity = self.calculate_capacity()
         return check_dcr(capacity, abs(demand_force), self.name)
         
     # def calculate_capacity_fnt(
@@ -334,18 +364,27 @@ class BoltTensileCalculator(LimitState):
     """
     Calculates the shear strength of a single bolt based on its properties.
     """
-    def __init__(self, connection: Connection):
+    def __init__(self, endpoint:ConnectionEndpoint,debug: bool = False):
         """
         Initializes the calculator with a Connection object.
         Assumes a 'bolted' connection configuration.
         """
-        self.loads = connection.loads
-        self.connection = connection
-        self.bolt_config: BoltConfiguration = connection.configuration
+        self.name = "Bolt Tensile Strength"
+        self.endpoint = endpoint
+        self.bolt_config: BoltConfiguration = endpoint.connection_configuration
         self.bolt_area = area_circular_bolt(self.bolt_config.bolt_diameter)
         self.fnv = self.bolt_config.bolt_grade.Fnv
         self.no_bolts = self.bolt_config.n_rows * self.bolt_config.n_columns
-        self.design_method = connection.design_method
+        self.design_method = endpoint.design_method
+        self._debug = debug
+
+    @property
+    def demand_loads_shear(self) -> float:
+        """Returns the shear demand on the bolt."""
+        self.loads_vu = get_load(self.endpoint, "Vu")
+        self.loads_pu = get_load(self.endpoint, "Pu")
+        return ((self.loads_vu**2 + self.loads_pu**2) **0.5).to("kip")
+    
     @property
     def resistance_factor(self) -> float:
         """Returns the resistance factor for bolt shear."""
@@ -354,13 +393,14 @@ class BoltTensileCalculator(LimitState):
         elif self.design_method == "ASD":
             return 2
     def calculate_capacity(
-        self,debug: bool = False
+        self
     ):
         """
         Calculates the modified design tensile strength of the bolt, considering interaction with shear.
         """
+        debug = self._debug
         logger = DebugLogger("Modified Bolt Tensile Strength (Interaction)", debug)
-        demand_force_shear = self.loads.Vu if self.loads and self.loads.Vu else 0.0
+        demand_force_shear = self.demand_loads_shear
         fnv = self.bolt_config.bolt_grade.Fnv
         fnt = self.bolt_config.bolt_grade.Fnt
         resistance_factor = self.resistance_factor
@@ -376,6 +416,7 @@ class BoltTensileCalculator(LimitState):
         
         # frv is the required shear stress per unit area
         shear_per_bolt = demand_force_shear / self.no_bolts
+        print(demand_force_shear)
         frv = shear_per_bolt / self.bolt_area
         logger.add_calculation("Shear per Bolt (V / n_bolts)", shear_per_bolt)
         logger.add_calculation("Required Shear Stress (frv = V_per_bolt / Ab)", frv)
@@ -385,6 +426,7 @@ class BoltTensileCalculator(LimitState):
         logger.add_calculation("Interaction Coefficient (Fnt / (phi * Fnv))", interaction_coefficient)
         
         # Calculate the nominal modified tensile stress
+        print(fnt,frv,interaction_coefficient)
         modified_fnt_nominal = 1.3 * fnt - fnt * interaction_coefficient 
         logger.add_calculation("Modified F'nt (Nominal, before cap)", modified_fnt_nominal)
 
@@ -394,13 +436,11 @@ class BoltTensileCalculator(LimitState):
         logger.display()
         return final_fnt_modified
     
-    def check_dcr(self, debug: bool = False) -> float:
+    def check_dcr(self) -> float:
         """Calculates the demand-to-capacity ratio for Fnt."""
-        if self.loads is None:
-            raise ValueError("DesignLoads must be provided to check_dcr_fnt.")
-
-        capacity = self.calculate_capacity_fnt(debug = debug)
-        return check_dcr(capacity, abs(self.loads.Pu)/self.no_bolts, "Bolt Tensile Strength", **kwargs)
+        demand_load = get_load(self.endpoint, "out_of_plane_force")
+        capacity = self.calculate_capacity()
+        return check_dcr(capacity, abs(demand_load)/self.no_bolts, "Bolt Tensile Strength")
     
     
 
