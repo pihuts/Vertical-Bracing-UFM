@@ -22,6 +22,7 @@ class ConnectionFactory:
         member_b: Any,
         component_a: ConnectionComponent = ConnectionComponent.TOTAL,
         component_b: ConnectionComponent = ConnectionComponent.TOTAL,
+        connection_configuration: Optional[BoltConfiguration] = None,
         *args, **kwargs
     ) -> Connection:
         """
@@ -32,8 +33,8 @@ class ConnectionFactory:
         global_loads = kwargs.pop('global_loads', None)
         role_a = member_a.Role 
         role_b = member_b.Role 
-        endpoint_a = ConnectionEndpoint(member=member_a, component=component_a, role=role_a,connection_configuration=BoltConfiguration(*args, **kwargs))
-        endpoint_b = ConnectionEndpoint(member=member_b, component=component_b, role=role_b, connection_configuration=BoltConfiguration(*args, **kwargs))
+        endpoint_a = ConnectionEndpoint(member=member_a, component=component_a, role=role_a,connection_configuration=connection_configuration)
+        endpoint_b = ConnectionEndpoint(member=member_b, component=component_b, role=role_b, connection_configuration=connection_configuration)
 
         return Connection(
             member_a=endpoint_a,
