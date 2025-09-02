@@ -596,7 +596,7 @@ class TensileRuptureCalculator:
         logger.display()
         a = self.ubs(S_c=S_c,N_c=N_c,x_bar=x_bar)
         b = self.A_net(dbolt=dbolt,n_rows=n_rows,t=t,A_g=Ag,ubs=Ubs)
-        c = self.calculations(F_u=self.Fu, A_e=Ae, phi=resistance_factor, load_condition=self.loading_condition)
+        c = self.strength_calculations(F_u=self.Fu, A_e=Ae, phi=resistance_factor, load_condition=self.loading_condition)
         return design_strength
 
     def check_dcr(self, **kwargs) -> float:
@@ -613,19 +613,14 @@ class BlockShearCalculator:
     """
     def __init__(
         self,
-        endpoint: "ConnectionEndpoint",
-        connection: Connection,
-        loading_orientation: LoadingOrientation = "Axial",
-        loading_condition: int = 1,
-        thickness: float = None,
-        loads: DesignLoads = None
+        endpoint: "ConnectionEndpoint",debug:bool = False
     ):
-        self.loads = loads
+        self.loads = endpoint.loads
         self.endpoint = endpoint
         self.member = endpoint.member
-        self.bolt_config: BoltConfiguration = connection.configuration
-        self.loading_orientation = loading_orientation
-        self.loading_condition = loading_condition
+        self.bolt_config: BoltConfiguration = endpoint.connection_configuration
+        
+        self.loading_condition = self.member.loading_condition if hasattr(self.member, 'loading_condition') else 1
         self.row_spacing = self.bolt_config.row_spacing
         self.column_spacing = self.bolt_config.column_spacing
         #check if member have width or d then use which is applicable
@@ -637,20 +632,20 @@ class BlockShearCalculator:
 
 
         # CORRECTED: _get_member_thickness now always returns a unit-aware value
-        self.thickness = thickness if thickness is not None else get_applicable_thickness(endpoint)
-        self.bolt_hole_diameter = self.bolt_config.bolt_diameter + 1/8
+        self.thickness = get_applicable_thickness(endpoint)
+        self.bolt_hole_diameter = self.bolt_config.bolt_diameter + 1/8 * si.inch
         self.failure_pattern = []
-        if self.loads.Vu or self.member.Type == "L":
+        print(self.loads.Vu,self.member.Type == "L",self.loads.Pu)
+        if self.loads.Vu > 0.00001 or self.member.Type == "L":
             self.failure_pattern.append("L")
-        elif self.loads.Pu:
+        if self.loads.Pu > 0.00001 and self.member.Type != "L":
             self.failure_pattern.append("U")
-
     # --- Calculation methods now correctly include loading_condition ---
 
     def _calculate_l_shear_yield_path(self, debug=False) -> float:
         logger = DebugLogger("L-Pattern Gross Shear Area (Agv)", debug)
-        spacing, rows, edge_dist = (self.bolt_config.row_spacing, self.bolt_config.n_rows, self.bolt_config.edge_distance_vertical) if self.loading_orientation == "Shear" else (self.bolt_config.column_spacing, self.bolt_config.n_columns, self.bolt_config.edge_distance_horizontal)
-        
+        # spacing, rows, edge_dist = (self.bolt_config.row_spacing, self.bolt_config.n_rows, self.bolt_config.edge_distance_vertical) if self.loading_orientation == "Shear" else (self.bolt_config.column_spacing, self.bolt_config.n_columns, self.bolt_config.edge_distance_horizontal)
+        spacing, rows, edge_dist = (self.bolt_config.row_spacing, self.bolt_config.n_rows, self.bolt_config.edge_distance_vertical)
         logger.add_input("Spacing", spacing)
         logger.add_input("Rows/Columns", rows)
         logger.add_input("Edge Distance", edge_dist)
@@ -666,8 +661,8 @@ class BlockShearCalculator:
     def _calculate_l_shear_rupture_path(self, debug=False) -> float:
         logger = DebugLogger("L-Pattern Net Shear Area (Anv)", debug)
         gross_area = self._calculate_l_shear_yield_path(debug=False) # Don't double-log inputs
-        rows = self.bolt_config.n_rows if self.loading_orientation == "Shear" else self.bolt_config.n_columns
-
+        # rows = self.bolt_config.n_rows if self.loading_orientation == "Shear" else self.bolt_config.n_columns
+        rows = self.bolt_config.n_rows
         logger.add_input("Gross Shear Area (Agv)", gross_area)
         logger.add_input("Rows/Columns", rows)
         logger.add_input("Bolt Hole Diameter", self.bolt_hole_diameter)
@@ -683,11 +678,11 @@ class BlockShearCalculator:
     
     def _calculate_l_tension_rupture_path(self, debug=False) -> float:
         logger = DebugLogger("L-Pattern Net Tension Area (Ant)", debug)
-        if self.loading_orientation == "Axial":
-            spacing, rows, edge_dist = self.bolt_config.row_spacing, self.bolt_config.n_rows, self.bolt_config.edge_distance_vertical
-        else:
-            spacing, rows, edge_dist = self.bolt_config.column_spacing, self.bolt_config.n_columns, self.bolt_config.edge_distance_horizontal
-        
+        # if self.loading_orientation == "Axial":
+        #     spacing, rows, edge_dist = self.bolt_config.row_spacing, self.bolt_config.n_rows, self.bolt_config.edge_distance_vertical
+        # else:
+        #     spacing, rows, edge_dist = self.bolt_config.column_spacing, self.bolt_config.n_columns, self.bolt_config.edge_distance_horizontal
+        spacing, rows, edge_dist = self.bolt_config.row_spacing, self.bolt_config.n_rows, self.bolt_config.edge_distance_vertical
         logger.add_input("Spacing", spacing)
         logger.add_input("Rows/Columns", rows)
         logger.add_input("Edge Distance", edge_dist)
@@ -737,10 +732,15 @@ class BlockShearCalculator:
         logger.add_output("Net Tension Area (Ant = Lnt * t * loading_condition)", net_area)
         logger.display()
         return net_area  # Ensure we return the minimum of the two calculated areas
-    @handcalc(jupyter_display=jupyter_display, precision=3, override=jupyter_format)
-    def _calculation(self):
+    def get_properties(self,load_type):
+        if load_type == "axial":
+            N_para,S_para,l_e_para,N_perp,S_perp,L_e_perp = self.bolt_config.n_columns,self.bolt_config.column_spacing,self.bolt_config.edge_distance_horizontal, self.bolt_config.n_rows,self.bolt_config.row_spacing,self.bolt_config.edge_distance_vertical
+        elif load_type == "shear":
+            N_para,S_para,l_e_para,N_perp,S_perp,L_e_perp = self.bolt_config.n_rows,self.bolt_config.row_spacing,self.bolt_config.edge_distance_vertical, self.bolt_config.n_columns,self.bolt_config.column_spacing,self.bolt_config.edge_distance_horizontal
+        return N_para,S_para,l_e_para,N_perp,S_perp,L_e_perp
+    def _calculation(self,d_bolt,t,width,load_condition,F_y,F_u):
         @handcalc(jupyter_display=jupyter_display, precision=3, override=jupyter_format)
-        def _calculation_l_shear(S_r,N_r,L_eh,t,load_condition):
+        def _calculation_l_shear_yield_path(S_r,N_r,L_eh,t,load_condition):
             l = S_r * (N_r - 1) + L_eh
             A_gp = l * t * load_condition
             return A_gp
@@ -762,25 +762,32 @@ class BlockShearCalculator:
             A_hole = (N_r - 1) * d_bolt
             l_net = l_g - A_hole
             A_net_1 = l_net * t * self.loading_condition
-            A_net_2 = ((width - S_r)/2 - d_bolt/2) * t * 2
-            net_area = min(A_net_1, A_net_2)
-            return net_area
+            if width > 0.000001 * si.inch :A_net_2 = ((width - S_r)/2 - d_bolt/2) * t * 2;A_net = min(A_net_1, A_net_2)
+            else: A_net = A_net_1
+            return A_net
+# net_area = min(A_net_1, A_net_2)
+# return net_area
         @handcalc(jupyter_display=jupyter_display, precision=3, override=jupyter_format)
-        def _calculation_shear_component(F_y,Fu):
-            shear_yield_strength = 0.60 * Fy * shear_yield_component
-            shear_rupture_strength = 0.60 * Fu * shear_rupture_component
-            governing_shear_strength = min(shear_yield_strength, shear_rupture_strength)
-            
+        def _calculation_block_shear(F_y,F_u,A_gv,A_nv,A_nt):
+            U_bs = 1
+            V_n_1 = 0.60 * F_y * A_gv
+            V_n_2 = 0.60 * F_u * A_nv
+            V_n = min(V_n_1, V_n_2)
+            P_n = V_n + F_u * A_nt * U_bs
+            return P_n
         if "L" in self.failure_pattern  :
-            shear_yield_component = self._calculate_l_shear_yield_path(debug=debug)
-            shear_rupture_component = self._calculate_l_shear_rupture_path(debug=debug)
-            tension_rupture_component = self._calculate_l_tension_rupture_path(debug=debug)
-        elif self.failure_pattern == "U":
-            shear_yield_component = self._calculate_l_shear_yield_path(debug=debug) * 2
-            shear_rupture_component = self._calculate_l_shear_rupture_path(debug=debug) * 2
-            tension_rupture_component = self._calculate_u_tension_rupture_path(debug=debug)
-
-        
+            N_para,S_para,l_e_para,N_perp,S_perp,L_e_perp = self.get_properties("axial")
+            A_g_shear = _calculation_l_shear_yield_path(S_para,N_para,l_e_para,t,load_condition)
+            A_n_shear = _calculation_l_shear_rupture_path(A_g_shear,N_para,d_bolt,t,load_condition)
+            A_n_tension = _calculation_l_tension_rupture_path(S_perp,N_perp,L_e_perp,d_bolt,t,load_condition)
+            _calculation_block_shear(F_y = F_y,F_u = F_u,A_gv = A_g_shear,A_nv = A_n_shear,A_nt = A_n_tension)
+        elif "U" in  self.failure_pattern:
+            N_para,S_para,l_e_para,N_perp,S_perp,L_e_perp = self.get_properties("axial")
+            A_g_shear = _calculation_l_shear_yield_path(S_r=S_para,N_r=N_para,L_eh=l_e_para,t=t,load_condition = load_condition)* 2
+            A_n_shear = _calculation_l_shear_rupture_path(A_g_shear*0.5,N_para,d_bolt,t,load_condition) * 2
+            A_n_tension = _calculation_u_tension_rupture_path(S_perp,N_perp,d_bolt,t,width)
+            _calculation_block_shear(F_y = F_y,F_u = F_u,A_gv = A_g_shear,A_nv = A_n_shear,A_nt = A_n_tension)
+        # A_g_shear = _calculation_l_shear_yield_path(S_r,N_r,L_eh,t,load_condition)
     def calculate_capacity(self, resistance_factor: float = 0.75, debug: bool = False) -> float:
         """
         Calculates the block shear capacity with detailed logging of all inputs and outputs.
@@ -792,7 +799,6 @@ class BlockShearCalculator:
         
         logger.add_input("Member Type", self.member.Type)
         logger.add_input("Failure Pattern", self.failure_pattern)
-        logger.add_input("Loading Orientation", self.loading_orientation)
         logger.add_input("Ultimate Strength (Fu)", Fu)
         logger.add_input("Yield Strength (Fy)", Fy)
         logger.add_input("Thickness (t)", self.thickness)
@@ -811,11 +817,11 @@ class BlockShearCalculator:
 
         tension_rupture_component = 0.0
 
-        if self.failure_pattern == "L":
+        if "L" in self.failure_pattern:
             shear_yield_component = self._calculate_l_shear_yield_path(debug=debug)
             shear_rupture_component = self._calculate_l_shear_rupture_path(debug=debug)
             tension_rupture_component = self._calculate_l_tension_rupture_path(debug=debug)
-        elif self.failure_pattern == "U":
+        elif "U" in self.failure_pattern:
             shear_yield_component = self._calculate_l_shear_yield_path(debug=debug) * 2
             shear_rupture_component = self._calculate_l_shear_rupture_path(debug=debug) * 2
             tension_rupture_component = self._calculate_u_tension_rupture_path(debug=debug)
@@ -847,7 +853,7 @@ class BlockShearCalculator:
         logger.add_output("Design Capacity (phi * Rn)", design_capacity)
         
         logger.display()
-
+        _calculation = self._calculation(d_bolt=self.bolt_hole_diameter,t=self.thickness,width=self.width,load_condition=self.loading_condition,F_y=Fy,F_u=Fu)
         return design_capacity
 
     def check_dcr(self, **kwargs) -> float:
@@ -2100,4 +2106,5 @@ class WeldCalculator:
             logger.display()
 
 
-aisc_360_14th = [BoltShearCalculator, BoltTensileCalculator,TensileYieldingCalculator,TensileRuptureCalculator]
+# aisc_360_14th = [BoltShearCalculator, BoltTensileCalculator,TensileYieldingCalculator,TensileRuptureCalculator,BlockShearCalculator]
+aisc_360_14th = [BlockShearCalculator]

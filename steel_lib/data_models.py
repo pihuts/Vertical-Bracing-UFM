@@ -44,11 +44,12 @@ class Plate:
     t: si.inch
     material: Material
     loading_condition: int = 1
-    length: Any = None
-    width: Any = None
+    length: Any = 0 * si.inch
+    width: Any = 0 * si.inch
     clipping: Any = 0 * si.inch
     Type: str = "PL"
     geometry: "GeometricProperties" = field(init=False)
+    Role: str = "PLATE"
 
     def __post_init__(self):
         """
@@ -210,7 +211,7 @@ class ConnectionEndpoint:
     """
     member: Any
     component: ConnectionComponent = ConnectionComponent.TOTAL
-    role: Optional[Literal['BEAM', 'COLUMN', 'GIRDER', 'END_PLATE', 'SHEAR_PLATE', 'FLANGE_PLATE']] = None
+    role: Optional[Literal['BEAM', 'COLUMN', 'GIRDER', 'END_PLATE', 'SHEAR_PLATE', 'FLANGE_PLATE','GUSSET_PLATE']] = None
     loads: DesignLoads = field(default_factory=DesignLoads, init=False)
     connection_configuration: Optional[Union[BoltConfiguration, WeldConfiguration]] = None
     design_method: str = "LRFD"  # Default design method
@@ -395,6 +396,7 @@ class Connection:
             'END_PLATE':  {'Pu': self.global_loads.fy, 'Vu': self.global_loads.fx},
             'SHEAR_PLATE':{'Pu': self.global_loads.fx, 'Vu': self.global_loads.fy},
             'BRACE':   {'Pu': self.global_loads.direct_load, 'Vu': 0 * si.kip},
+            'GUSSET_PLATE': {'Pu': self.global_loads.fx + self.global_loads.direct_load, 'Vu': 0 * si.kip},
         }
 
         # Step 2: Assign loads based on explicit roles if they exist
