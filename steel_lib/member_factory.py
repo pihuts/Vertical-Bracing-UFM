@@ -1,7 +1,8 @@
 from typing import Any, Type
 from .data_models import Plate, GeometricProperties, Material
 from .si_units import si
-
+from steelpy import aisc
+from steel_lib.materials import MATERIALS, BOLT_GRADES, WELD_ELECTRODES
 class MemberFactory:
     """
     A factory class responsible for creating and enriching member objects.
@@ -32,14 +33,31 @@ class MemberFactory:
     @staticmethod
     def create_steelpy_member(
         section_class: Type, section_name: str, material: Material, shape_type: str,
-        role:str,loading_condition: int = 1,length = None
+        role:str,loading_condition: int = 1,length = None,**kwargs
     ) -> Any:
         """
         Creates a steelpy member, assigns material and loading properties,
         and enriches it with the GeometricProperties dataclass.
         """
+        SHAPE_CATALOG_MAP = {
+            "C_shapes": aisc.C_shapes,
+            "DBL_L_shapes": aisc.DBL_L_shapes,
+            "HP_shapes": aisc.HP_shapes,
+            "HSS_R_shapes": aisc.HSS_R_shapes,
+            "HSS_shapes": aisc.HSS_shapes,
+            "L_shapes": aisc.L_shapes,
+            "M_shapes": aisc.M_shapes,
+            "MC_shapes": aisc.MC_shapes,
+            "MT_shapes": aisc.MT_shapes,
+            "PIPE_shapes": aisc.PIPE_shapes,
+            "S_shapes": aisc.S_shapes,
+            "ST_shapes": aisc.ST_shapes,
+            "W_shapes": aisc.W_shapes,
+            "WT_shapes": aisc.WT_shapes,
+        }
+        material = MATERIALS[material]
         # 1. Create the basic steelpy section object
-        section = getattr(section_class, section_name)
+        section = getattr(SHAPE_CATALOG_MAP[section_class], section_name)
 
         # 2. Enrich the raw steelpy object with units for all relevant attributes
         MemberFactory._enrich_member_with_units(section)

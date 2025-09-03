@@ -6,7 +6,7 @@ from steel_lib.data_models import (
     ConnectionComponent,
     BoltConfiguration,
     WeldConfiguration,
-    Connection
+    Connection,get_component_from_string
 )
 from .si_units import si
 
@@ -33,6 +33,8 @@ class ConnectionFactory:
         global_loads = kwargs.pop('global_loads', None)
         role_a = member_a.Role 
         role_b = member_b.Role 
+        component_a = get_component_from_string(component_a)
+        component_b = get_component_from_string(component_b)
         endpoint_a = ConnectionEndpoint(member=member_a, component=component_a, role=role_a,connection_configuration=connection_configuration)
         endpoint_b = ConnectionEndpoint(member=member_b, component=component_b, role=role_b, connection_configuration=connection_configuration)
 

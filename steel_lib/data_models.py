@@ -4,7 +4,22 @@ from typing import Optional, Any, Literal, Union
 from enum import Enum,auto
 from .si_units import si
 import math
-
+from pydantic import BaseModel, ConfigDict
+def get_component_from_string(component_str: str):
+    """
+    Safely retrieves a ConnectionComponent enum member from its string value.
+    """
+    print(f"Attempting to find enum member for string: '{component_str}'")
+    try:
+        # The core of the solution: pass the string directly to the class.
+        enum_member = ConnectionComponent(component_str)
+        print(f"  --> Success! Found member: {enum_member}\n")
+        return enum_member
+    except ValueError:
+        # This block runs if the string does not match any enum value.
+        print(f"  --> Failure! '{component_str}' is not a valid value for ConnectionComponent.\n")
+        # In a real app, you might raise an error here or return None.
+        return None
 
 
 class ConnectionComponent(Enum):
@@ -123,9 +138,10 @@ class BoltGrade:
     Fnt: si.ksi  # Nominal tensile stress
     Fnv: si.ksi  # Nominal shear stress
 
-@dataclass
-class BoltConfiguration:
+
+class BoltConfiguration(BaseModel):
     """Defines the geometry and properties of a bolted connection."""
+    model_config = ConfigDict(extra="ignore")
     row_spacing: float
     column_spacing: float
     edge_distance_vertical: float
@@ -137,19 +153,19 @@ class BoltConfiguration:
     n_columns: int = 1
     connection_type: Literal["bolted"] = "bolted"
 
-    def __post_init__(self):
-        if isinstance(self.row_spacing, (int, float)):
-            self.row_spacing = self.row_spacing * si.inch
-        if isinstance(self.column_spacing, (int, float)):
-            self.column_spacing = self.column_spacing * si.inch
-        if isinstance(self.edge_distance_vertical, (int, float)):
-            self.edge_distance_vertical = self.edge_distance_vertical * si.inch
-        if isinstance(self.edge_distance_horizontal, (int, float)):
-            self.edge_distance_horizontal = self.edge_distance_horizontal * si.inch
-        if isinstance(self.bolt_diameter, (int, float)):
-            self.bolt_diameter = self.bolt_diameter * si.inch
-        if isinstance(self.angle, (int, float)):
-            self.angle = self.angle * math.pi / 180.0 # Convert degrees to radians
+    # def __post_init__(self):
+    #     if isinstance(self.row_spacing, (int, float)):
+    #         self.row_spacing = self.row_spacing * si.inch
+    #     if isinstance(self.column_spacing, (int, float)):
+    #         self.column_spacing = self.column_spacing * si.inch
+    #     if isinstance(self.edge_distance_vertical, (int, float)):
+    #         self.edge_distance_vertical = self.edge_distance_vertical * si.inch
+    #     if isinstance(self.edge_distance_horizontal, (int, float)):
+    #         self.edge_distance_horizontal = self.edge_distance_horizontal * si.inch
+    #     if isinstance(self.bolt_diameter, (int, float)):
+    #         self.bolt_diameter = self.bolt_diameter * si.inch
+    #     if isinstance(self.angle, (int, float)):
+    #         self.angle = self.angle * math.pi / 180.0 # Convert degrees to radians
 from steelpy import aisc
 from typing import Any, Type
 
