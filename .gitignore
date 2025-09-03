@@ -50,3 +50,20 @@ steel_lib/__pycache__/calculations.cpython-313.pyc
 steel_lib/__pycache__/data_models.cpython-313.pyc
 steel_lib/__pycache__/load_transformer.cpython-313.pyc
 new.ipynb
+.backup/
+steel_lib/__pycache__
+venv/
+# Virtual Environment
+venv/
+.venv/
+env/
+.env/
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# Build artifacts
+build/
+dist/
+*.egg-info/

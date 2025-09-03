@@ -13,14 +13,38 @@ from .data_models import (
     DesignLoads,
     BeamColumnTransferredForce,result,Connection,ConnectionEndpoint
 )
+from .latext import LatexConfig
 from .debugging import DebugLogger
 from abc import ABC, abstractmethod
 from handcalcs.decorator import handcalc
 # Define a type hint for numbers for clarity
 Numeric = Union[int, float]
 jupyter_format = "long"
-jupyter_display = True
+jupyter_display = False
 pi = math.pi
+
+def auto_add_subtitle(config_object, *, key: str):
+    """
+    A decorator that runs a calculation and automatically adds the first
+    returned value to the config_object's subtitles using the provided key.
+    """
+    def decorator(calculation_function):
+        def wrapper(*args, **kwargs):
+            # 1. Run the original calculation function.
+            results = calculation_function(*args, **kwargs)
+            
+            # 2. Extract the LaTeX string, which we assume is the first value.
+            latex_value = results[0]
+
+            # 3. Perform the automatic action using BOTH the key and the value.
+            print(f"--- Decorator: Adding subtitle for key '{key}' ---")
+            config_object.add_subtitle(key=key, value=latex_value)
+
+            # 4. Return the original results.
+            return results
+        return wrapper
+    return decorator
+
 def get_applicable_gross_area(endpoint: "ConnectionEndpoint") -> float:
     """
     Determines the applicable gross area (Ag) based on the connection endpoint.
@@ -640,6 +664,7 @@ class BlockShearCalculator:
             self.failure_pattern.append("L")
         if self.loads.Pu > 0.00001 and self.member.Type != "L":
             self.failure_pattern.append("U")
+        self.latex_config = LatexConfig("BLOCKSHEAR TEST")
     # --- Calculation methods now correctly include loading_condition ---
 
     def _calculate_l_shear_yield_path(self, debug=False) -> float:
@@ -723,7 +748,6 @@ class BlockShearCalculator:
         logger.add_calculation("Net Length (Lnt)", net_length)
         if self.width:
             net_area0 = net_length * self.thickness * self.loading_condition
-
             net_area1 = ((self.width - self.row_spacing)/2 - self.bolt_hole_diameter/2) * self.thickness * 2
             net_area = min(net_area0, net_area1)
         else:
@@ -739,54 +763,67 @@ class BlockShearCalculator:
             N_para,S_para,l_e_para,N_perp,S_perp,L_e_perp = self.bolt_config.n_rows,self.bolt_config.row_spacing,self.bolt_config.edge_distance_vertical, self.bolt_config.n_columns,self.bolt_config.column_spacing,self.bolt_config.edge_distance_horizontal
         return N_para,S_para,l_e_para,N_perp,S_perp,L_e_perp
     def _calculation(self,d_bolt,t,width,load_condition,F_y,F_u):
+        @auto_add_subtitle(self.latex_config,key = "Calculate Shear Component")
         @handcalc(jupyter_display=jupyter_display, precision=3, override=jupyter_format)
-        def _calculation_l_shear_yield_path(S_r,N_r,L_eh,t,load_condition):
+        def _calculation_l_shear_yield_path(S_r,N_r,L_eh,t,pattern):
+            if pattern == "L":number_path = 1
+            elif pattern == "U": number_path = 2
             l = S_r * (N_r - 1) + L_eh
-            A_gp = l * t * load_condition
+            A_gp = l * t * number_path
             return A_gp
+        @auto_add_subtitle(self.latex_config,key = "Calculate Shear Component1")
         @handcalc(jupyter_display=jupyter_display, precision=3, override=jupyter_format)
-        def _calculation_l_shear_rupture_path(A_gp,N_r,d_bolt,t,load_condition):
-            A_hole = (N_r - 0.5) * d_bolt * t * load_condition
+        def _calculation_l_shear_rupture_path(A_gp,N_r,d_bolt,t,pattern):
+            if pattern == "L":number_path = 1
+            elif pattern == "U": number_path = 2
+            A_hole = (N_r - 0.5) * d_bolt * t * number_path
             A_net = A_gp - A_hole
             return A_net
+        @auto_add_subtitle(self.latex_config,key = "Calculate Shear Component2")
         @handcalc(jupyter_display=jupyter_display, precision=3, override=jupyter_format)
-        def _calculation_l_tension_rupture_path(S_r,N_r,L_ev,d_bolt,t,load_condition):
+        def _calculation_l_tension_rupture_path(S_r,N_r,L_ev,d_bolt,t,pattern):
+            if pattern == "L":number_path = 1
+            elif pattern == "U": number_path = 2
             l_gross = S_r * (N_r - 1) + L_ev
             A_hole = (N_r - 0.5) * d_bolt
             l_net = l_gross - A_hole
-            A_net = l_net * t * load_condition
+            A_net = l_net * t * number_path
             return A_net
+        @auto_add_subtitle(self.latex_config,key = "Calculate Shear Component2")
         @handcalc(jupyter_display=jupyter_display, precision=3, override=jupyter_format)
-        def _calculation_u_tension_rupture_path(S_r,N_r,d_bolt,t,width) -> float:
+        def _calculation_u_tension_rupture_path(S_r,N_r,d_bolt,t,width,pattern) -> float:
             l_g = S_r * (N_r - 1)
             A_hole = (N_r - 1) * d_bolt
             l_net = l_g - A_hole
-            A_net_1 = l_net * t * self.loading_condition
+            A_net_1 = l_net * t 
             if width > 0.000001 * si.inch :A_net_2 = ((width - S_r)/2 - d_bolt/2) * t * 2;A_net = min(A_net_1, A_net_2)
             else: A_net = A_net_1
             return A_net
 # net_area = min(A_net_1, A_net_2)
 # return net_area
+        @auto_add_subtitle(self.latex_config, key = "Calculate Shear Component3")
         @handcalc(jupyter_display=jupyter_display, precision=3, override=jupyter_format)
-        def _calculation_block_shear(F_y,F_u,A_gv,A_nv,A_nt):
+        def _calculation_block_shear(F_y,F_u,A_gv,A_nv,A_nt,load_condition):
             U_bs = 1
             V_n_1 = 0.60 * F_y * A_gv
             V_n_2 = 0.60 * F_u * A_nv
             V_n = min(V_n_1, V_n_2)
-            P_n = V_n + F_u * A_nt * U_bs
+            P_n = V_n + F_u * A_nt * U_bs * load_condition
             return P_n
         if "L" in self.failure_pattern  :
+            pattern = "L"
             N_para,S_para,l_e_para,N_perp,S_perp,L_e_perp = self.get_properties("axial")
-            A_g_shear = _calculation_l_shear_yield_path(S_para,N_para,l_e_para,t,load_condition)
-            A_n_shear = _calculation_l_shear_rupture_path(A_g_shear,N_para,d_bolt,t,load_condition)
-            A_n_tension = _calculation_l_tension_rupture_path(S_perp,N_perp,L_e_perp,d_bolt,t,load_condition)
-            _calculation_block_shear(F_y = F_y,F_u = F_u,A_gv = A_g_shear,A_nv = A_n_shear,A_nt = A_n_tension)
+            A_g_shear = _calculation_l_shear_yield_path(S_para,N_para,l_e_para,t,pattern)
+            A_n_shear = _calculation_l_shear_rupture_path(A_g_shear,N_para,d_bolt,t,pattern)
+            A_n_tension = _calculation_l_tension_rupture_path(S_perp,N_perp,L_e_perp,d_bolt,t,pattern)
+            _calculation_block_shear(F_y = F_y,F_u = F_u,A_gv = A_g_shear,A_nv = A_n_shear,A_nt = A_n_tension,load_condition=load_condition)
         elif "U" in  self.failure_pattern:
+            pattern = "U"
             N_para,S_para,l_e_para,N_perp,S_perp,L_e_perp = self.get_properties("axial")
-            A_g_shear = _calculation_l_shear_yield_path(S_r=S_para,N_r=N_para,L_eh=l_e_para,t=t,load_condition = load_condition)* 2
-            A_n_shear = _calculation_l_shear_rupture_path(A_g_shear*0.5,N_para,d_bolt,t,load_condition) * 2
-            A_n_tension = _calculation_u_tension_rupture_path(S_perp,N_perp,d_bolt,t,width)
-            _calculation_block_shear(F_y = F_y,F_u = F_u,A_gv = A_g_shear,A_nv = A_n_shear,A_nt = A_n_tension)
+            latex_A_g_shear,A_g_shear = _calculation_l_shear_yield_path(S_r=S_para,N_r=N_para,L_eh=l_e_para,t=t,pattern = pattern)
+            latex_A_n_shear,A_n_shear = _calculation_l_shear_rupture_path(A_g_shear,N_para,d_bolt,t,pattern) 
+            latex_A_n_tension,A_n_tension = _calculation_u_tension_rupture_path(S_perp,N_perp,d_bolt,t,width,pattern)
+            _calculation_block_shear(F_y = F_y,F_u = F_u,A_gv = A_g_shear,A_nv = A_n_shear,A_nt = A_n_tension,load_condition=load_condition)
         # A_g_shear = _calculation_l_shear_yield_path(S_r,N_r,L_eh,t,load_condition)
     def calculate_capacity(self, resistance_factor: float = 0.75, debug: bool = False) -> float:
         """
@@ -859,7 +896,7 @@ class BlockShearCalculator:
     def check_dcr(self, **kwargs) -> float:
         """Calculates the demand-to-capacity ratio."""
         capacity = self.calculate_capacity(**kwargs)
-        return check_dcr(capacity, abs(self.loads.Pu), f"Block Shear {self.failure_pattern}-Pattern", **kwargs)
+        return check_dcr(capacity, abs(self.loads.Pu), f"Block Shear {self.failure_pattern}-Pattern", **kwargs),self.latex_config
 
 class ConnectionCapacityCalculator:
     """

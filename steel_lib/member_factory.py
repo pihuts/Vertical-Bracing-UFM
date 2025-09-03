@@ -11,7 +11,24 @@ class MemberFactory:
     gross areas for its various components. This centralizes the geometric
     calculations and decouples the calculators from the member's specific shape.
     """
+    @staticmethod
+    def create_plate_member(
+        thickness: float,
+        material: Material, role:str, loading_condition: int = 1, length: float = None,width: float= None 
+    ) -> Plate:
+        """
+        Creates a Plate member with the specified dimensions and material properties.
+        The Plate is enriched with geometric properties for its components.
+        """
+        plate = Plate(width=width * si.inch, t=thickness * si.inch,material=material,loading_condition=loading_condition,Role=role)
 
+        # Calculate and assign geometric properties
+        plate.geometry = GeometricProperties(
+            total=plate.area,
+            web=plate.area,      # For a plate, the entire area is considered as web
+            flange=0.0           # Plates do not have flanges
+        )
+        return plate
     @staticmethod
     def create_steelpy_member(
         section_class: Type, section_name: str, material: Material, shape_type: str,

@@ -6,13 +6,14 @@ class DesignCode:
     def __init__(self,limit_states:List[LimitState] = [],debug:bool = False):
         self._debug = debug
         self.limit_states = limit_states if limit_states else []
-    def check_limit_states(self,connection: Connection):
+    def check_limit_states(self,connection: Connection): 
             if self.limit_states:
                 results = []
                 for limit_state in self.limit_states:
                     calculator = limit_state(connection.member_a,debug= self._debug)
-                    result = calculator.check_dcr()
+                    result,sol_latex = calculator.check_dcr()
+
                     results.append(result)
-                return results
+                return results,sol_latex
             else:
                 raise ValueError("No limit states defined for this design code.")

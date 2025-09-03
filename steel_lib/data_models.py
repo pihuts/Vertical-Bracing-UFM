@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Any, Literal, Union
 from enum import Enum,auto
 from .si_units import si
+import math
 
 
 
@@ -125,16 +126,30 @@ class BoltGrade:
 @dataclass
 class BoltConfiguration:
     """Defines the geometry and properties of a bolted connection."""
-    row_spacing: si.inch   # Default to 3 inches if not specified
-    column_spacing: si.inch  # Default to 3 inches if not specified
-    edge_distance_vertical: si.inch 
-    edge_distance_horizontal: si.inch 
-    bolt_diameter: si.inch 
-    bolt_grade: BoltGrade 
-    angle: float = 0.0
-    n_rows: int = 1  # Default to 1 row if not specified
-    n_columns: int = 1  # Default to 1 column if not specified
+    row_spacing: float
+    column_spacing: float
+    edge_distance_vertical: float
+    edge_distance_horizontal: float
+    bolt_diameter: float
+    bolt_grade: BoltGrade
+    angle: float = 0.0  # Angle in degrees
+    n_rows: int = 1
+    n_columns: int = 1
     connection_type: Literal["bolted"] = "bolted"
+
+    def __post_init__(self):
+        if isinstance(self.row_spacing, (int, float)):
+            self.row_spacing = self.row_spacing * si.inch
+        if isinstance(self.column_spacing, (int, float)):
+            self.column_spacing = self.column_spacing * si.inch
+        if isinstance(self.edge_distance_vertical, (int, float)):
+            self.edge_distance_vertical = self.edge_distance_vertical * si.inch
+        if isinstance(self.edge_distance_horizontal, (int, float)):
+            self.edge_distance_horizontal = self.edge_distance_horizontal * si.inch
+        if isinstance(self.bolt_diameter, (int, float)):
+            self.bolt_diameter = self.bolt_diameter * si.inch
+        if isinstance(self.angle, (int, float)):
+            self.angle = self.angle * math.pi / 180.0 # Convert degrees to radians
 from steelpy import aisc
 from typing import Any, Type
 
@@ -180,13 +195,22 @@ class DesignLoads:
 @dataclass(frozen=True)
 class GlobalLoads:
     """Represents a generalized 6-component load vector."""
-    fx: si.kip = 0 * si.kip
-    fy: si.kip = 0 * si.kip
-    fz: si.kip = 0 * si.kip
-    mx: si.kip = 0 * si.kip
-    my: si.kip = 0 * si.kip
-    mz: si.kip = 0 * si.kip
-    direct_load : si.kip = 0 * si.kip # this is for cases like bracing
+    fx: float = 0.0
+    fy: float = 0.0
+    fz: float = 0.0
+    mx: float = 0.0
+    my: float = 0.0
+    mz: float = 0.0
+    direct_load : float = 0.0 # this is for cases like bracing
+
+    def __post_init__(self):
+        object.__setattr__(self, 'fx', self.fx * si.kip if isinstance(self.fx, (int, float)) else self.fx)
+        object.__setattr__(self, 'fy', self.fy * si.kip if isinstance(self.fy, (int, float)) else self.fy)
+        object.__setattr__(self, 'fz', self.fz * si.kip if isinstance(self.fz, (int, float)) else self.fz)
+        object.__setattr__(self, 'mx', self.mx * si.kip if isinstance(self.mx, (int, float)) else self.mx)
+        object.__setattr__(self, 'my', self.my * si.kip if isinstance(self.my, (int, float)) else self.my)
+        object.__setattr__(self, 'mz', self.mz * si.kip if isinstance(self.mz, (int, float)) else self.mz)
+        object.__setattr__(self, 'direct_load', self.direct_load * si.kip if isinstance(self.direct_load, (int, float)) else self.direct_load)
 
 @dataclass(frozen=True)
 class BeamColumnTransferredForce:
@@ -428,4 +452,4 @@ class Connection:
                 primary_member_endpoint.loads = DesignLoads(Pu=self.global_loads.fy, Vu=self.global_loads.fx)
             if not secondary_member_endpoint.role:
                 secondary_member_endpoint.loads = DesignLoads(Pu=self.global_loads.fx, Vu=self.global_loads.fy)
-        
+
