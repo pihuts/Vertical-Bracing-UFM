@@ -20,6 +20,7 @@ class ConnectionFactory:
     def create_bolted_connection(
         member_a: Any,
         member_b: Any,
+        global_loads,
         component_a: ConnectionComponent = ConnectionComponent.TOTAL,
         component_b: ConnectionComponent = ConnectionComponent.TOTAL,
         connection_configuration: Optional[BoltConfiguration] = None,
@@ -30,7 +31,6 @@ class ConnectionFactory:
         connected components.
         """
         override_ag = kwargs.pop('override_Ag', None)
-        global_loads = kwargs.pop('global_loads', None)
         role_a = member_a.Role 
         role_b = member_b.Role 
         component_a = get_component_from_string(component_a)

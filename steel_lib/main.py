@@ -5,7 +5,20 @@ from typing import List, Optional, Any, Literal
 from enum import Enum
 import random # Used for mocking results
 from .member_factory import MemberFactory
-from .data_models import BoltConfiguration
+from .data_models import BoltConfiguration,GlobalLoads,get_component_from_string,Plate
+from .calculations import aisc_360_14th
+from .core import DesignCode
+from .connection_factory import ConnectionFactory
+from .member_factory import MemberFactory
+
+
+from forallpeople import Physical # Make sure to import the Physical class
+
+# Define a simple function that tells FastAPI how to convert a Physical object
+# The str() function on a Physical object usually gives a nice representation like "50.0 kip"
+custom_encoder = {
+    Physical: lambda v: str(v)
+}
 # --- 1. Pydantic Models (Matching the Frontend JSON) ---
 # These are the same as before.
 from steel_lib.connection_factory import ConnectionFactory
@@ -46,7 +59,7 @@ class MemberModel(BaseModel):
     width: Optional[float] = None
     clipping: Optional[float] = None
     material: str
-    loading_condition: str = Field(..., alias='loadingCondition')
+    loading_condition: int = Field(..., alias='loadingCondition')
     length: float
 
 class ConnectionModel(BaseModel):
@@ -68,99 +81,14 @@ class ProjectData(BaseModel):
     global_loads: List[GlobalLoadsModel] = Field(..., alias='globalLoads')
 
 
-# # --- 2. Your Python Business Logic Classes ---
+def create_member(member):
+    member_type = member_type["type"]
+    if member_type == "steelpy":
+        return MemberFactory.create_steelpy_member(**member)
+    elif member_type == "plate":
+        return Plate(**member)
 
-# class ConnectionComponent(Enum):
-#     TOTAL = "TOTAL"
-#     WEB = "WEB"
-#     FLANGE = "FLANGE"
-
-# # Placeholder for your actual member classes
-# class BaseMember:
-#     def __init__(self, **kwargs):
-#         for key, value in kwargs.items():
-#             setattr(self, key.upper(), value)
-
-# class SteelpyMember(BaseMember): pass
-# class PlateMember(BaseMember): pass
-# class BoltConfiguration:
-#     def __init__(self, **kwargs):
-#         for key, value in kwargs.items(): setattr(self, key, value)
-# class GlobalLoads:
-#     def __init__(self, **kwargs):
-#         for key, value in kwargs.items(): setattr(self, key, value)
-
-# class ConnectionEndpoint:
-#     def __init__(self, member, component, role, connection_configuration):
-#         self.member = member
-#         self.component = component
-#         self.role = role
-#         self.connection_configuration = connection_configuration
-
-# class Connection:
-#     def __init__(self, member_a, member_b, override_Ag, global_loads):
-#         self.member_a = member_a
-#         self.member_b = member_b
-#         self.override_Ag = override_Ag
-#         self.global_loads = global_loads
-#         # print(f"Successfully created Connection between {member_a.member.name} and {member_b.member.name}")
-
-# class ConnectionFactory:
-#     @staticmethod
-#     def create_bolted_connection(
-#         member_a: Any, member_b: Any, component_a: ConnectionComponent = ConnectionComponent.TOTAL,
-#         component_b: ConnectionComponent = ConnectionComponent.TOTAL,
-#         connection_configuration: Optional[BoltConfiguration] = None, *args, **kwargs
-#     ) -> Connection:
-#         override_ag = kwargs.pop('override_Ag', None)
-#         global_loads = kwargs.pop('global_loads', None)
-#         role_a = member_a.ROLE
-#         role_b = member_b.ROLE
-        
-#         endpoint_a = ConnectionEndpoint(member=member_a, component=component_a, role=role_a, connection_configuration=connection_configuration)
-#         endpoint_b = ConnectionEndpoint(member=member_b, component=component_b, role=role_b, connection_configuration=connection_configuration)
-#         return Connection(member_a=endpoint_a, member_b=endpoint_b, override_Ag=override_ag, global_loads=global_loads)
-
-# # --- NEW: Your DesignCode and a Mock LimitState ---
-# class LimitState:
-#     def __init__(self, endpoint, debug=False):
-#         self.endpoint = endpoint
-#         self._debug = debug
-#     def check_dcr(self):
-#         raise NotImplementedError
-
-# class MockBoltShearLimitState(LimitState):
-#     def check_dcr(self):
-#         # Simulate a calculation
-#         capacity = self.endpoint.connection_configuration.n_rows * self.endpoint.connection_configuration.n_columns * 25.5
-#         demand = self.endpoint.member.global_loads.direct_load
-#         dcr = demand / capacity if capacity > 0 else 0
-#         result = {"name": "Bolt Shear", "capacity": round(capacity, 2), "demand": demand, "dcr": round(dcr, 2)}
-#         sol_latex = f"V_r = {capacity:.2f} \\text{{ kip}} > V_u = {demand:.2f} \\text{{ kip}}"
-#         return result, sol_latex
-
-# class DesignCode:
-#     def __init__(self,limit_states:List[LimitState] = [],debug:bool = False):
-#         self._debug = debug
-#         self.limit_states = limit_states if limit_states else []
-#     def check_limit_states(self,connection: Connection):
-#             if self.limit_states:
-#                 results = []
-#                 # For this example, we'll just return the latex of the first limit state
-#                 sol_latex = ""
-#                 for i, limit_state_class in enumerate(self.limit_states):
-#                     # Assuming the check is on member_a for simplicity
-#                     calculator = limit_state_class(connection.member_a, debug=self._debug)
-#                     result, latex = calculator.check_dcr()
-#                     if i == 0: sol_latex = latex
-#                     results.append(result)
-#                 return results, sol_latex
-#             else:
-#                 raise ValueError("No limit states defined for this design code.")
-
-# --- 3. FastAPI Application Setup ---
-
-app = FastAPI()
+app = FastAPI(json_encoders=custom_encoder)
 origins = ["*"] 
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
@@ -170,68 +98,43 @@ def read_root():
 
 @app.post("/api/calculate")
 def calculate_connections(project_data: ProjectData):
+    design_code = DesignCode(aisc_360_14th, debug=False)
     connection_data = project_data.connections[0]
-    connection_configuration = project_data.bolt_configurations[0]
-    member_a = connection_data.member_a
-    member_b = connection_data.member_b
-    component_a = connection_data.component_a
-    component_b = connection_data.component_b
-    bolt_1 = BoltConfiguration(**connection_configuration.model_dump())
-
+    global_loads = GlobalLoads(**project_data.global_loads[0].model_dump())
+    member_a_data = connection_data.member_a.model_dump()
+    member_b_data = connection_data.member_b.model_dump()
     
-    # member_a = MemberFactory.create_steelpy_member(**(members[0].model_dump()))
-    # member_B = MemberFactory.create_steelpy_member(**(members[1].model_dump()))
-    # connection_configuration = ConnectionFactory.create_bolted_connection(
-    #     member_a=member_a,
-    #     member_b=member_B,
-    #     component_a=ConnectionComponent.TOTAL,
-    #     component_b=ConnectionComponent.WEB,
-    #     # role_a="BEAM",
-    #     # role_b="COLUMN",
-    #     connection_configuration = bolt_1,
-    #     global_loads=loads
-    # )
-    # MemberFactory.create_steelpy_member()
-    # print(project_data.member_a.type)
+    connection_configuration = project_data.bolt_configurations[0]
 
-    # print(f"Received calculation request for {len(project_data.connections)} connection(s)...")
+    member_a = MemberFactory.create_member(**member_a_data)
+    member_b = MemberFactory.create_member(**member_b_data)
+    component_a = get_component_from_string(connection_data.component_a)
+    component_b = get_component_from_string(connection_data.component_b)
+    bolt_1 = BoltConfiguration(**connection_configuration.model_dump())
+    connection = ConnectionFactory.create_bolted_connection(
+        member_a=member_a,
+        member_b=member_b,
+        component_a=component_a,
+        component_b=component_b,
+        connection_configuration=bolt_1,
+        global_loads=global_loads
+    )
+    # print(global_loads)
+    # print(bolt_1)
+    # print(connection)
+    results_df, sol_latexs = design_code.check_limit_states(connection)
 
-    # members_by_id = {m.id: (SteelpyMember(**m.model_dump(by_alias=True)) if m.type == 'steelpy' else PlateMember(**m.model_dump(by_alias=True))) for m in project_data.members}
-    # bolts_by_id = {b.id: BoltConfiguration(**b.model_dump(by_alias=True)) for b in project_data.bolt_configurations}
-    # loads_by_id = {l.id: GlobalLoads(**l.model_dump(by_alias=True)) for l in project_data.global_loads}
+    # --- The Performance-Optimized Solution ---
 
-    # # Add global loads to members for the mock limit state check
-    # for conn_model in project_data.connections:
-    #     members_by_id[conn_model.member_a.id].global_loads = loads_by_id[conn_model.global_loads_id]
-    #     members_by_id[conn_model.member_b.id].global_loads = loads_by_id[conn_model.global_loads_id]
+    # 2. Use applymap() to convert every object in the DataFrame to a string.
+    #    This operation is vectorized and significantly faster than a Python for-loop.
+    serializable_df = results_df.applymap(str)
 
-    # final_results = {}
-    # # Instantiate your design code with the limit states to check
-    # design_code = DesignCode(limit_states=[MockBoltShearLimitState])
+    # 3. Convert the now-safe, string-only DataFrame to a list of dictionaries.
+    results_json = serializable_df.to_dict(orient='records')
+    
+    # --- End of Optimization ---
 
-    # for conn_data in project_data.connections:
-    #     connection_obj = ConnectionFactory.create_bolted_connection(
-    #         member_a=members_by_id[conn_data.member_a.id],
-    #         member_b=members_by_id[conn_data.member_b.id],
-    #         component_a=ConnectionComponent[conn_data.component_a],
-    #         component_b=ConnectionComponent[conn_data.component_b],
-    #         connection_configuration=bolts_by_id[conn_data.bolt_configuration_id],
-    #         global_loads=loads_by_id[conn_data.global_loads_id],
-    #         override_Ag=conn_data.override_ag
-    #     )
-    #     # Run the check
-    #     limit_state_results, latex_solution = design_code.check_limit_states(connection_obj)
-        
-    #     # For simplicity, we'll just process the first connection's results if multiple are sent
-    #     # A real app might return a list of results.
-    #     if not final_results:
-    #         governing_state = max(limit_state_results, key=lambda x: x['dcr'])
-    #         final_results = {
-    #             "boltShearCapacity": next((r['capacity'] for r in limit_state_results if r['name'] == 'Bolt Shear'), 0),
-    #             "blockShearCapacity": 189.2, # Mocked
-    #             "bearingCapacity": 240.0, # Mocked
-    #             "utilizationRatio": governing_state['dcr'],
-    #             "latexSolution": latex_solution
-    #         }
+    # 4. Return the fully serializable data.
+    return {"results": results_json, "sol_latexs": sol_latexs}
 
-    return {"test":12123}

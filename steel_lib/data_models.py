@@ -5,6 +5,7 @@ from enum import Enum,auto
 from .si_units import si
 import math
 from pydantic import BaseModel, ConfigDict
+from typing import Dict
 def get_component_from_string(component_str: str):
     """
     Safely retrieves a ConnectionComponent enum member from its string value.
@@ -138,10 +139,9 @@ class BoltGrade:
     Fnt: si.ksi  # Nominal tensile stress
     Fnv: si.ksi  # Nominal shear stress
 
-
-class BoltConfiguration(BaseModel):
+@dataclass
+class BoltConfiguration:
     """Defines the geometry and properties of a bolted connection."""
-    model_config = ConfigDict(extra="ignore")
     row_spacing: float
     column_spacing: float
     edge_distance_vertical: float
@@ -152,20 +152,43 @@ class BoltConfiguration(BaseModel):
     n_rows: int = 1
     n_columns: int = 1
     connection_type: Literal["bolted"] = "bolted"
+    name:str = "pets"
+    id:str = "pets"
 
-    # def __post_init__(self):
-    #     if isinstance(self.row_spacing, (int, float)):
-    #         self.row_spacing = self.row_spacing * si.inch
-    #     if isinstance(self.column_spacing, (int, float)):
-    #         self.column_spacing = self.column_spacing * si.inch
-    #     if isinstance(self.edge_distance_vertical, (int, float)):
-    #         self.edge_distance_vertical = self.edge_distance_vertical * si.inch
-    #     if isinstance(self.edge_distance_horizontal, (int, float)):
-    #         self.edge_distance_horizontal = self.edge_distance_horizontal * si.inch
-    #     if isinstance(self.bolt_diameter, (int, float)):
-    #         self.bolt_diameter = self.bolt_diameter * si.inch
-    #     if isinstance(self.angle, (int, float)):
-    #         self.angle = self.angle * math.pi / 180.0 # Convert degrees to radians
+    def __post_init__(self):
+        if isinstance(self.row_spacing, (int, float)):
+            self.row_spacing = self.row_spacing * si.inch
+        if isinstance(self.column_spacing, (int, float)):
+            self.column_spacing = self.column_spacing * si.inch
+        if isinstance(self.edge_distance_vertical, (int, float)):
+            self.edge_distance_vertical = self.edge_distance_vertical * si.inch
+        if isinstance(self.edge_distance_horizontal, (int, float)):
+            self.edge_distance_horizontal = self.edge_distance_horizontal * si.inch
+        if isinstance(self.bolt_diameter, (int, float)):
+            self.bolt_diameter = self.bolt_diameter * si.inch
+        if isinstance(self.angle, (int, float)):
+            self.angle = self.angle * math.pi / 180.0 # Convert degrees to radians
+        # Check if the provided bolt_grade is a string
+        BOLT_GRADES: Dict[str, BoltGrade] = {
+        "a325_n": BoltGrade(name="A325-N", Fnt=90.0 * si.ksi, Fnv=54.0 * si.ksi), # Threads included
+        "a325_x": BoltGrade(name="A325-X", Fnt=90.0 * si.ksi, Fnv=68.0 * si.ksi), # Threads excluded
+        "a490_n": BoltGrade(name="A490-N", Fnt=113.0 * si.ksi, Fnv=68.0 * si.ksi), # Threads included
+        "a490_x": BoltGrade(name="A490-X", Fnt=113.0 * si.ksi, Fnv=84.0 * si.ksi), # Threads excluded
+    }
+        if isinstance(self.bolt_grade, str):
+            grade_key = self.bolt_grade.lower() # Make it case-insensitive
+            
+            # Look up the string in our catalog
+            grade_object = BOLT_GRADES.get(grade_key)
+            
+            # If the key is invalid, raise a helpful error
+            if grade_object is None:
+                raise ValueError(
+                    f"Invalid bolt grade string: '{self.bolt_grade}'. "
+                    f"Valid options are: {list(BOLT_GRADES.keys())}"
+                )
+            self.bolt_grade = grade_object
+
 from steelpy import aisc
 from typing import Any, Type
 
@@ -211,6 +234,8 @@ class DesignLoads:
 @dataclass(frozen=True)
 class GlobalLoads:
     """Represents a generalized 6-component load vector."""
+    id: str = "pets"
+    name:str = "pets"
     fx: float = 0.0
     fy: float = 0.0
     fz: float = 0.0
