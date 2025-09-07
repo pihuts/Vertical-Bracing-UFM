@@ -781,32 +781,26 @@ class BlockShearCalculator:
         @auto_add_subtitle(self.latex_config,key = "Calculate Shear Component")
         @handcalc(jupyter_display=jupyter_display, precision=3, override=jupyter_format)
         def _calculation_l_shear_yield_path(S_r,N_r,L_eh,t,pattern):
-            if pattern == "L":number_path = 1
-            elif pattern == "U": number_path = 2
             l = S_r * (N_r - 1) + L_eh
-            A_gp = l * t * number_path
+            A_gp = l * t 
             return A_gp
         @auto_add_subtitle(self.latex_config,key = "Calculate Shear Component1")
         @handcalc(jupyter_display=jupyter_display, precision=3, override=jupyter_format)
         def _calculation_l_shear_rupture_path(A_gp,N_r,d_bolt,t,pattern):
-            if pattern == "L":number_path = 1
-            elif pattern == "U": number_path = 2
-            A_hole = (N_r - 0.5) * d_bolt * t * number_path
+            A_hole = (N_r - 0.5) * d_bolt * t 
             A_net = A_gp - A_hole
             return A_net
         @auto_add_subtitle(self.latex_config,key = "Calculate Shear Component2")
         @handcalc(jupyter_display=jupyter_display, precision=3, override=jupyter_format)
         def _calculation_l_tension_rupture_path(S_r,N_r,L_ev,d_bolt,t,pattern):
-            if pattern == "L":number_path = 1
-            elif pattern == "U": number_path = 2
             l_gross = S_r * (N_r - 1) + L_ev
             A_hole = (N_r - 0.5) * d_bolt
             l_net = l_gross - A_hole
-            A_net = l_net * t * number_path
+            A_net = l_net * t 
             return A_net
         @auto_add_subtitle(self.latex_config,key = "Calculate Shear Component2")
         @handcalc(jupyter_display=jupyter_display, precision=3, override=jupyter_format)
-        def _calculation_u_tension_rupture_path(S_r,N_r,d_bolt,t,width,pattern) -> float:
+        def _calculation_u_tension_rupture_path(S_r,N_r,d_bolt,t,width) -> float:
             l_g = S_r * (N_r - 1)
             A_hole = (N_r - 1) * d_bolt
             l_net = l_g - A_hole
@@ -905,7 +899,7 @@ class BlockShearCalculator:
         logger.add_output("Design Capacity (phi * Rn)", design_capacity)
         
         logger.display()
-        _calculation = self._calculation(d_bolt=self.bolt_hole_diameter,t=self.thickness,width=self.width,load_condition=self.loading_condition,F_y=Fy,F_u=Fu)
+        _calculation = self._calculation(d_bolt=self.bolt_hole_diameter,t=self.thickness,width=self.width,load_condition=self.loading_condition,F_y=Fy,F_u=Fu,)
         return design_capacity
 
     def check_dcr(self, **kwargs) -> float:

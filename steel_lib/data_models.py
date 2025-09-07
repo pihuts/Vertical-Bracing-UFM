@@ -67,6 +67,7 @@ class Plate:
     Type: str = "PL"
     geometry: "GeometricProperties" = field(init=False)
     Role: str = "PLATE"
+    angle: float = 0.0  # Angle in radians, default to 0 (horizontal)
 
     def __post_init__(self):
         """
@@ -148,7 +149,6 @@ class BoltConfiguration:
     edge_distance_horizontal: float
     bolt_diameter: float
     bolt_grade: BoltGrade
-    angle: float = 0.0  # Angle in degrees
     n_rows: int = 1
     n_columns: int = 1
     connection_type: Literal["bolted"] = "bolted"
@@ -166,8 +166,7 @@ class BoltConfiguration:
             self.edge_distance_horizontal = self.edge_distance_horizontal * si.inch
         if isinstance(self.bolt_diameter, (int, float)):
             self.bolt_diameter = self.bolt_diameter * si.inch
-        if isinstance(self.angle, (int, float)):
-            self.angle = self.angle * math.pi / 180.0 # Convert degrees to radians
+
         # Check if the provided bolt_grade is a string
         BOLT_GRADES: Dict[str, BoltGrade] = {
         "a325_n": BoltGrade(name="A325-N", Fnt=90.0 * si.ksi, Fnv=54.0 * si.ksi), # Threads included
@@ -208,11 +207,35 @@ class WeldConfiguration:
     Defines the geometry and properties of a specific weld line in a connection.
     """
     weld_size: float
-    length: float
     electrode: WeldElectrode  # Link to the WeldElectrode object
     weld_type: WeldType = "fillet" # Default to fillet, the most common type
     connection_type="welded",
-    orientation: Literal["horizontal", "vertical", "overhead"] = "horizontal"
+    length: float = 0.0
+    
+    def __post_init__(self):
+        if isinstance(self.weld_size, (int, float)):
+            self.weld_size = self.weld_size * si.inch
+        if isinstance(self.length, (int, float)):
+            self.length = self.length * si.inch
+        # Check if the provided electrode is a string
+        WELD_ELECTRODES: Dict[str, WeldElectrode] = {
+            "e60xx": WeldElectrode(Fexx=60.0 * si.ksi),
+            "e70xx": WeldElectrode(Fexx=70.0 * si.ksi),
+            "e80xx": WeldElectrode(Fexx=80.0 * si.ksi),
+        }
+        if isinstance(self.electrode, str):
+            electrode_key = self.electrode.lower()  # Make it case-insensitive
+            
+            # Look up the string in our catalog
+            electrode_object = WELD_ELECTRODES.get(electrode_key)
+            
+            # If the key is invalid, raise a helpful error
+            if electrode_object is None:
+                raise ValueError(
+                    f"Invalid weld electrode string: '{self.electrode}'. "
+                    f"Valid options are: {list(WELD_ELECTRODES.keys())}"
+                )
+            self.electrode = electrode_object
 
 @dataclass(frozen=True)
 class PlateDimensions:
