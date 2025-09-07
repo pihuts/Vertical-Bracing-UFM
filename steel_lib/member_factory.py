@@ -1,9 +1,9 @@
-from typing import Any, Type
+from typing import Any, Type, Literal, Optional
 from .data_models import Plate, GeometricProperties, Material
 from .si_units import si
 from steelpy import aisc
 from steel_lib.materials import MATERIALS, BOLT_GRADES, WELD_ELECTRODES
-
+import math
 class MemberFactory:
     """
     A factory class responsible for creating and enriching member objects.
@@ -14,8 +14,11 @@ class MemberFactory:
     calculations and decouples the calculators from the member's specific shape.
     """
     @staticmethod
-    def create_member(**kwargs):
-        member_type = kwargs["type"]
+    def create_member(
+        type: Literal["steelpy", "plate"],
+        **kwargs: Any
+    ) -> Any:
+        member_type = type
         if member_type == "steelpy":
             return MemberFactory.create_steelpy_member(**kwargs)
         elif member_type == "plate":
@@ -24,19 +27,35 @@ class MemberFactory:
     @staticmethod
     def create_plate_member(
         thickness: float,
-        material: Material, role:str, loading_condition: int = 1, length: float = None,width: float= None,**kwargs 
+        material: Literal["a36", "a572_gr50", "a992"],
+        role: Literal["END_PLATE", "SHEAR_PLATE", "GUSSET_PLATE"],
+        loading_condition: int = 1,
+        length: Optional[float] = 0,
+        width: Optional[float] = 0,
+        angle: Optional[float] = 0,
+        **kwargs: Any
     ) -> Plate:
         """
         Creates a Plate member with the specified dimensions and material properties.
         The Plate is enriched with geometric properties for its components.
         """
+        if isinstance(angle, (int, float)):
+            angle = angle * math.pi / 180.0 # Convert degrees to radians
         material = MATERIALS[material]
-        plate = Plate(width=width * si.inch, t=thickness * si.inch,material=material,loading_condition=loading_condition,Role=role)
+        plate = Plate(width=width, length=length, t=thickness, angle=angle, material=material, loading_condition=loading_condition, Role=role)
         return plate
+
     @staticmethod
     def create_steelpy_member(
-        section_class: Type, section_name: str, material: Material, shape_type: str,
-        role:str,loading_condition: int = 1,length = None,**kwargs
+        section_class: Literal["C_shapes", "DBL_L_shapes", "HP_shapes", "HSS_R_shapes", "HSS_shapes", "L_shapes", "M_shapes", "MC_shapes", "MT_shapes", "PIPE_shapes", "S_shapes", "ST_shapes", "W_shapes", "WT_shapes"],
+        section_name: str,
+        material: Literal["a36", "a572_gr50", "a992"],
+        shape_type: str,
+        role: Literal["BEAM", "COLUMN", "GIRDER", "BRACE"],
+        loading_condition: int = 1,
+        length: Optional[float] = 0,
+        angle: Optional[float] = 0,
+        **kwargs: Any
     ) -> Any:
         """
         Creates a steelpy member, assigns material and loading properties,
@@ -58,6 +77,8 @@ class MemberFactory:
             "W_shapes": aisc.W_shapes,
             "WT_shapes": aisc.WT_shapes,
         }
+        if isinstance(angle, (int, float)):
+            angle = angle * math.pi / 180.0 # Convert degrees to radians
         material = MATERIALS[material]
         # 1. Create the basic steelpy section object
         section = getattr(SHAPE_CATALOG_MAP[section_class], section_name)
@@ -71,8 +92,9 @@ class MemberFactory:
         section.add_property("E", material.E)
         section.add_property("Type", shape_type)
         section.add_property("Role", role)
+        section.add_property("angle", angle)
         if length is not None:
-            section.add_property("length", length)
+            section.add_property("length", length * si.inch)
         section.loading_condition = loading_condition
 
         # 4. Now that units and type exist, enrich it with geometric properties
@@ -81,7 +103,7 @@ class MemberFactory:
         return section
 
     @staticmethod
-    def _enrich_member_with_units(member: Any):
+    def _enrich_member_with_units(member: Any) -> None:
         """
         Iterates through a member's attributes and applies units based on a
         predefined mapping. This ensures that all downstream calculations

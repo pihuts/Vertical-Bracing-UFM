@@ -33,7 +33,6 @@ class BoltConfigurationModel(BaseModel):
     edge_distance_horizontal: float = Field(..., alias='edgeDistanceHorizontal')
     bolt_diameter: float = Field(..., alias='boltDiameter')
     bolt_grade: str = Field(..., alias='boltGrade')
-    angle: float
     connection_type: str = Field(..., alias='connectionType')
 
 class GlobalLoadsModel(BaseModel):
@@ -46,21 +45,23 @@ class GlobalLoadsModel(BaseModel):
     my: float
     mz: float
     direct_load: float = Field(..., alias='directLoad')
+    R_w: float = Field(..., alias='R_w')# weld load
 
 class MemberModel(BaseModel):
-    id: str
-    type: Literal["steelpy", "plate"]
-    name: str
-    section_class: Optional[str] = Field(None, alias='sectionClass')
-    section_name: Optional[str] = Field(None, alias='sectionName')
-    shape_type: Optional[str] = Field(None, alias='shapeType')
-    role: Optional[str] = None
-    thickness: Optional[float] = None
-    width: Optional[float] = None
-    clipping: Optional[float] = None
-    material: str
-    loading_condition: int = Field(..., alias='loadingCondition')
-    length: float
+    id: str#required for both
+    type: Literal["steelpy", "plate"]#required for both
+    name: str#required for both
+    section_class: Optional[str] = Field(None, alias='sectionClass')#steelpy only
+    section_name: Optional[str] = Field(None, alias='sectionName')#steelpy only
+    shape_type: Optional[str] = Field(None, alias='shapeType')#steelpy only
+    role: Optional[str] = None#required for both
+    thickness: Optional[float] = None#plate only
+    width: Optional[float] = None#plate only
+    clipping: Optional[float] = None#plate only
+    material: str#required for both
+    loading_condition: int = Field(..., alias='loadingCondition')#required for both
+    length: float#required for both
+    angle: float = 0.0
 
 class ConnectionModel(BaseModel):
     id: str
@@ -82,11 +83,11 @@ class ProjectData(BaseModel):
 
 
 def create_member(member):
-    member_type = member_type["type"]
+    member_type = member["type"]
     if member_type == "steelpy":
         return MemberFactory.create_steelpy_member(**member)
     elif member_type == "plate":
-        return Plate(**member)
+        return MemberFactory.create_plate_member(**member)
 
 app = FastAPI(json_encoders=custom_encoder)
 origins = ["*"] 
@@ -98,6 +99,7 @@ def read_root():
 
 @app.post("/api/calculate")
 def calculate_connections(project_data: ProjectData):
+    print(project_data)
     design_code = DesignCode(aisc_360_14th, debug=False)
     connection_data = project_data.connections[0]
     global_loads = GlobalLoads(**project_data.global_loads[0].model_dump())
@@ -119,9 +121,9 @@ def calculate_connections(project_data: ProjectData):
         connection_configuration=bolt_1,
         global_loads=global_loads
     )
-    # print(global_loads)
-    # print(bolt_1)
-    # print(connection)
+    print(global_loads)
+    print(bolt_1)
+    print(connection)
     results_df, sol_latexs = design_code.check_limit_states(connection)
 
     # --- The Performance-Optimized Solution ---
@@ -136,5 +138,6 @@ def calculate_connections(project_data: ProjectData):
     # --- End of Optimization ---
 
     # 4. Return the fully serializable data.
+    print({"results": results_json, "sol_latexs": sol_latexs})
     return {"results": results_json, "sol_latexs": sol_latexs}
 

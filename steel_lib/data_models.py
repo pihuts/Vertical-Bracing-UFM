@@ -266,6 +266,8 @@ class GlobalLoads:
     my: float = 0.0
     mz: float = 0.0
     direct_load : float = 0.0 # this is for cases like bracing
+    fx_eq = 0.0  # equivalent F load 
+    r_w = 0.0  # load for weld
 
     def __post_init__(self):
         object.__setattr__(self, 'fx', self.fx * si.kip if isinstance(self.fx, (int, float)) else self.fx)
