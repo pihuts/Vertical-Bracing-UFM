@@ -19,8 +19,8 @@ class ConnectionFactory:
         member_a: Any,
         member_b: Any,
         global_loads: Any,
-        component_a: str,
-        component_b: str,
+        component_a: Literal["total", "web", "flange", "along_length", "along_width"],  # Updated type hint
+        component_b: Literal["total", "web", "flange", "along_length", "along_width"],  # Updated type hint
         connection_configuration: Optional[Union[BoltConfiguration, WeldConfiguration]],
         override_ag: Optional[float] = None,
     ) -> Connection:
@@ -60,8 +60,8 @@ class ConnectionFactory:
         member_a: Any,
         member_b: Any,
         global_loads: Any,
-        component_a: str,
-        component_b: str,
+        component_a: Literal["total", "web", "flange", "along_length", "along_width"],  # Updated type hint
+        component_b: Literal["total", "web", "flange", "along_length", "along_width"],  # Updated type hint
         connection_configuration: Optional[Union[BoltConfiguration, WeldConfiguration]] = None,
         override_ag: Optional[float] = None,
         **kwargs  # For configuration creation if needed
