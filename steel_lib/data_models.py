@@ -10,16 +10,12 @@ def get_component_from_string(component_str: str):
     """
     Safely retrieves a ConnectionComponent enum member from its string value.
     """
-    print(f"Attempting to find enum member for string: '{component_str}'")
     try:
         # The core of the solution: pass the string directly to the class.
         enum_member = ConnectionComponent(component_str)
-        print(f"  --> Success! Found member: {enum_member}\n")
         return enum_member
     except ValueError:
         # This block runs if the string does not match any enum value.
-        print(f"  --> Failure! '{component_str}' is not a valid value for ConnectionComponent.\n")
-        # In a real app, you might raise an error here or return None.
         return None
 
 
@@ -140,7 +136,7 @@ class BoltGrade:
     Fnt: si.ksi  # Nominal tensile stress
     Fnv: si.ksi  # Nominal shear stress
 
-@dataclass
+@dataclass(slots=True, kw_only=True)
 class BoltConfiguration:
     """Defines the geometry and properties of a bolted connection."""
     row_spacing: float
@@ -201,7 +197,7 @@ class WeldElectrode:
 
 WeldType = Literal["fillet", "groove"]
 
-@dataclass(kw_only=True)
+@dataclass(slots=True, kw_only=True)
 class WeldConfiguration:
     """
     Defines the geometry and properties of a specific weld line in a connection.
@@ -294,7 +290,7 @@ class BeamColumnTransferredForce:
 
 from typing import Union, Literal
 
-@dataclass
+@dataclass(slots=True)
 class ConnectionEndpoint:
     """
     Represents one side of a connection, defining which member and which specific
@@ -451,7 +447,7 @@ class result:
 #             global_loads=global_loads
 #         )
 
-@dataclass
+@dataclass(slots=True,kw_only=True)
 class Connection:
     """
     A unified connection class that explicitly defines the two members and their

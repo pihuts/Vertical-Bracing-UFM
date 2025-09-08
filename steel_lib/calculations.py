@@ -17,11 +17,63 @@ from .latext import LatexConfig
 from .debugging import DebugLogger
 from abc import ABC, abstractmethod
 from handcalcs.decorator import handcalc
+from functools import lru_cache
 # Define a type hint for numbers for clarity
 Numeric = Union[int, float]
 jupyter_format = "long"
 jupyter_display = False
 pi = math.pi
+
+
+from functools import wraps
+from handcalcs.decorator import handcalc
+
+def optional_reporting_handcalc(config_object, *, key: str, detailed: bool = False, **handcalc_kwargs):
+    """
+    A single, powerful conditional decorator that combines the functionality
+    of @handcalc and @auto_add_subtitle.
+
+    When config.HANDCALC_ENABLED is True, it:
+    1. Runs the decorated function through @handcalc.
+    2. Takes the resulting LaTeX output.
+    3. Adds the LaTeX as a subtitle to the provided config_object.
+    4. Returns the original (latex, result) tuple from handcalc.
+
+    When config.HANDCALC_ENABLED is False, it:
+    1. Simply runs the original, undecorated function.
+    2. Returns the direct result of that function (e.g., a float).
+
+    Args:
+        config_object: The report/LaTeX configuration object.
+        key (str): The key to use when adding the subtitle.
+        **handcalc_kwargs: All keyword arguments for the original @handcalc
+                           decorator (e.g., precision=3, override='latex').
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            if detailed:
+                # --- SLOW / DETAILED PATH ---
+
+                # 1. Programmatically apply the @handcalc decorator to the original function
+                #    using the provided kwargs.
+                handcalc_decorated_func = handcalc(**handcalc_kwargs)(func)
+
+                # 2. Execute the handcalc-decorated function to get the (latex, result) tuple.
+                results = handcalc_decorated_func(*args, **kwargs)
+
+                # 3. Now, perform the logic of the auto_add_subtitle decorator.
+                latex_value = results[0]
+                config_object.add_subtitle(key=key, value=latex_value)
+
+                # 4. Return the original, full result from handcalc.
+                return results[1]
+            else:
+                # --- FAST PATH ---
+                # Simply execute the original, undecorated function and return its value.
+                return func(*args, **kwargs)
+        return wrapper
+    return decorator
 
 def auto_add_subtitle(config_object, *, key: str):
     """
@@ -37,7 +89,6 @@ def auto_add_subtitle(config_object, *, key: str):
             latex_value = results[0]
 
             # 3. Perform the automatic action using BOTH the key and the value.
-            print(f"--- Decorator: Adding subtitle for key '{key}' ---")
             config_object.add_subtitle(key=key, value=latex_value)
 
             # 4. Return the original results.
@@ -170,7 +221,7 @@ def round_up_to_interval(number: Numeric, interval: Numeric) -> Numeric:
         raise ValueError("Interval cannot be zero.")
     return math.ceil(number / interval) * interval
 
-
+@lru_cache(maxsize=512)
 def check_dcr(capacity: float, demand: float, limit_state_name: str, debug: bool = False) -> float:
     """
     Calculates the demand-to-capacity ratio (DCR) and provides detailed logging.
@@ -284,7 +335,6 @@ class LimitState(ABC):
         Must be implemented by all subclasses.
         """
         pass
-@handcalc(jupyter_display=True, precision=3, override=jupyter_format)
 def area_circular_bolt(diameter: si.inch) :
     """Calculates the gross area of a circular bolt."""
     A_bolt = diameter**2 / 4 * pi
@@ -302,7 +352,6 @@ class BoltShearCalculator(LimitState):
         self.name = "Bolt Shear Strength"
         self.endpoint = endpoint
         self.bolt_config: BoltConfiguration = endpoint.connection_configuration
-        print(self.bolt_config)
         self.bolt_area = area_circular_bolt(self.bolt_config.bolt_diameter)
         self.fnv = self.bolt_config.bolt_grade.Fnv
         self.no_bolts = self.bolt_config.n_rows * self.bolt_config.n_columns
@@ -322,39 +371,28 @@ class BoltShearCalculator(LimitState):
             return 0.75
         elif self.design_method == "ASD":
             return 2
-    def _calculations(self,F_nv: float,A_bolt: float,N_shear_planes: int,phi: float):
 
-        @auto_add_subtitle(config_object=self.latex_config,key="Bolt Shear")   
-        @handcalc(jupyter_display=jupyter_display, precision=3, override=jupyter_format)
+    def _calculations(self,F_nv: float,A_bolt: float,N_shear_planes: int,phi: float): 
+        @optional_reporting_handcalc(config_object=self.latex_config,key="Bolt Shear",jupyter_display=jupyter_display, precision=3, override=jupyter_format)
         def calculations(self,F_nv: float,A_bolt: float,N_shear_planes: int,phi: float):
             nominal_strength = F_nv * A_bolt * N_shear_planes
             design_strength = phi * nominal_strength
             return design_strength
 
-        latex,result =  calculations(self,F_nv = F_nv,A_bolt= A_bolt,N_shear_planes= N_shear_planes,phi = phi)
+        result =  calculations(self,F_nv = F_nv,A_bolt= A_bolt,N_shear_planes= N_shear_planes,phi = phi)
         return result
     def calculate_capacity(self
     ) -> float:
         """
         Calculates the design shear strength of the bolt.
         """
-        debug = self._debug
-        logger = DebugLogger("Bolt Shear Strength", debug)
-        logger.add_input("Nominal Shear Stress (Fnv)", self.fnv)
-        logger.add_input("Bolt Area (Ab)", self.bolt_area)
         
         number_of_shear_planes = self.endpoint.shear_condition
         resistance_factor = self.resistance_factor
-        logger.add_input("Number of Shear Planes", number_of_shear_planes)
-        logger.add_input("Resistance Factor (phi)", resistance_factor)
-        # Nominal strength (Rn) = Fnv * Ab * Ns
+
         design_strength = self._calculations(self.fnv,self.bolt_area,number_of_shear_planes,resistance_factor)
 
-        # Design strength (phiRn) = phi * Rn
 
-        logger.add_output("Design Strength (phiRn)", design_strength)
-
-        logger.display()
         return design_strength
 
     def check_dcr(self) -> float:
@@ -423,9 +461,10 @@ class BoltTensileCalculator(LimitState):
             return 0.75
         elif self.design_method == "ASD":
             return 2
+    @lru_cache(maxsize=512)
     def _calculations(self,Vu,no_bolts,F_nv,F_nt_,A_bolt,phi):
-        @auto_add_subtitle(config_object=self.latex_config, key = "Parameters")
-        @handcalc(jupyter_display=jupyter_display, precision=3, override="params")
+
+        @optional_reporting_handcalc(config_object=self.latex_config, key = "Parameters",jupyter_display=jupyter_display, precision=3, override="params")
         def parameters(Vu,no_bolts,F_nv,F_nt_,A_bolt,phi):
             Vu = Vu
             no_bolts = no_bolts
@@ -433,8 +472,8 @@ class BoltTensileCalculator(LimitState):
             F_nt_ = F_nt_
             A_bolt = A_bolt
             phi = phi
-        @auto_add_subtitle(config_object=self.latex_config, key = "Bolt Tensile Modified Strength Calculations")
-        @handcalc(jupyter_display=jupyter_display, precision=3, override=jupyter_format)
+
+        @optional_reporting_handcalc(config_object=self.latex_config, key = "Bolt Tensile Modified Strength Calculations",jupyter_display=jupyter_display, precision=3, override=jupyter_format)
         def calculations(Vu,no_bolts,F_nv,F_nt_,A_bolt,phi):
             shear_bolt = Vu / no_bolts
             F_rv = shear_bolt/A_bolt
@@ -443,7 +482,7 @@ class BoltTensileCalculator(LimitState):
             F_nt = min(F_prime_nt, F_nt_) * A_bolt * phi
             return F_nt
         
-        _,result = calculations(Vu,no_bolts,F_nv,F_nt_,A_bolt,phi)
+        result = calculations(Vu,no_bolts,F_nv,F_nt_,A_bolt,phi)
         return result
     def calculate_capacity(
         self
@@ -451,46 +490,19 @@ class BoltTensileCalculator(LimitState):
         """
         Calculates the modified design tensile strength of the bolt, considering interaction with shear.
         """
-        debug = self._debug
-        logger = DebugLogger("Modified Bolt Tensile Strength (Interaction)", debug)
+
         demand_force_shear = self.demand_loads_shear
-        fnv = self.bolt_config.bolt_grade.Fnv
-        fnt = self.bolt_config.bolt_grade.Fnt
-        print(fnt)
+
+ 
         resistance_factor = self.resistance_factor
-        logger.add_input("Total Demand Shear Force (V)", demand_force_shear)
-        logger.add_input("Number of Bolts (n_bolts)", self.no_bolts)
-        logger.add_input("Nominal Tensile Stress (Fnt)", fnt)
-        logger.add_input("Nominal Shear Stress (Fnv)", fnv)
-        logger.add_input("Bolt Area (Ab)", self.bolt_area)
-        logger.add_input("Resistance Factor (phi)", resistance_factor)
 
-        # Per AISC J3.3a, the available tensile stress F'nt is a function of the applied shear stress frv
-        # F'nt = 1.3 * Fnt - (Fnt / (phi * Fnv)) * frv <= Fnt
-        
-        # frv is the required shear stress per unit area
-        shear_per_bolt = demand_force_shear / self.no_bolts
-        print(demand_force_shear)
-        frv = shear_per_bolt / self.bolt_area
-        logger.add_calculation("Shear per Bolt (V / n_bolts)", shear_per_bolt)
-        logger.add_calculation("Required Shear Stress (frv = V_per_bolt / Ab)", frv)
 
-        # The term (Fnt / (phi * Fnv)) is the interaction coefficient
-        interaction_coefficient = frv / (resistance_factor * fnv)
-        logger.add_calculation("Interaction Coefficient (Fnt / (phi * Fnv))", interaction_coefficient)
-        
-        # Calculate the nominal modified tensile stress
-        print(fnt,frv,interaction_coefficient)
-        modified_fnt_nominal = 1.3 * fnt - fnt * interaction_coefficient 
-        logger.add_calculation("Modified F'nt (Nominal, before cap)", modified_fnt_nominal)
 
-        # The result cannot be greater than the nominal tensile stress Fnt
-        final_fnt_modified = min(modified_fnt_nominal, fnt) * self.bolt_area * resistance_factor
-        logger.add_output("Final Modified Tensile Stress (F'nt)", final_fnt_modified)        
-        logger.display()
-        # paramssad = self.parameters(Vu=demand_force_shear,no_bolts=self.no_bolts,F_nv=fnv,F_nt=fnt,A_bolt=self.bolt_area,phi=resistance_factor)
-        
-        self._calculations(Vu=demand_force_shear,no_bolts=self.no_bolts,F_nv=fnv,F_nt_=self.bolt_config.bolt_grade.Fnt,A_bolt=self.bolt_area,phi=resistance_factor)
+
+
+
+
+        final_fnt_modified =self._calculations(Vu=demand_force_shear,no_bolts=self.no_bolts,F_nv=self.bolt_config.bolt_grade.Fnv,F_nt_=self.bolt_config.bolt_grade.Fnt,A_bolt=self.bolt_area,phi=resistance_factor)
         return final_fnt_modified
     
     def check_dcr(self) -> float:
@@ -661,20 +673,20 @@ class BlockShearCalculator:
             self.width = self.member.width
         elif hasattr(self.member, 'd'):
             self.width = self.member.d
-        print(f"Member width: {self.width}")
+
 
 
         # CORRECTED: _get_member_thickness now always returns a unit-aware value
         self.thickness = get_applicable_thickness(endpoint)
         self.bolt_hole_diameter = self.bolt_config.bolt_diameter + 1/8 * si.inch
         self.failure_pattern = []
-        print(self.loads.Vu,self.member.Type == "L",self.loads.Pu)
+
         if self.loads.Vu > 0.00001 or self.member.Type == "L":
             self.failure_pattern.append("L")
         if self.loads.Pu > 0.00001 and self.member.Type != "L":
             self.failure_pattern.append("U")
         self.latex_config = LatexConfig(main_title="BLOCKSHEAR TEST")
-        print(self.failure_pattern)
+
     # --- Calculation methods now correctly include loading_condition ---
 
     def _calculate_l_shear_yield_path(self, debug=False) -> float:
@@ -682,8 +694,7 @@ class BlockShearCalculator:
         logger = DebugLogger("L-Pattern Gross Shear Area (Agv)", debug)
         # spacing, rows, edge_dist = (self.bolt_config.row_spacing, self.bolt_config.n_rows, self.bolt_config.edge_distance_vertical) if self.loading_orientation == "Shear" else (self.bolt_config.column_spacing, self.bolt_config.n_columns, self.bolt_config.edge_distance_horizontal)
         spacing, rows, edge_dist = self.bolt_config.row_spacing, self.bolt_config.n_rows, self.bolt_config.edge_distance_vertical
-        print("asdasdasdasdasd",spacing, rows, edge_dist)
-        print(self.thickness , self.loading_condition)
+
         logger.add_input("Spacing", spacing)
         logger.add_input("Rows/Columns", rows)
         logger.add_input("Edge Distance", edge_dist)
@@ -777,29 +788,28 @@ class BlockShearCalculator:
         elif load_type == "shear":
             N_para,S_para,l_e_para,N_perp,S_perp,L_e_perp = self.bolt_config.n_rows,self.bolt_config.row_spacing,self.bolt_config.edge_distance_vertical, self.bolt_config.n_columns,self.bolt_config.column_spacing,self.bolt_config.edge_distance_horizontal
         return N_para,S_para,l_e_para,N_perp,S_perp,L_e_perp
+    @lru_cache(maxsize=512)
     def _calculation(self,d_bolt,t,width,load_condition,F_y,F_u):
-        @auto_add_subtitle(self.latex_config,key = "Calculate Shear Component")
-        @handcalc(jupyter_display=jupyter_display, precision=3, override=jupyter_format)
+        @optional_reporting_handcalc(self.latex_config,key = "Calculate Shear Component",jupyter_display=jupyter_display, precision=3, override=jupyter_format)
         def _calculation_l_shear_yield_path(S_r,N_r,L_eh,t,pattern):
             l = S_r * (N_r - 1) + L_eh
             A_gp = l * t 
             return A_gp
-        @auto_add_subtitle(self.latex_config,key = "Calculate Shear Component1")
-        @handcalc(jupyter_display=jupyter_display, precision=3, override=jupyter_format)
+
+        @optional_reporting_handcalc(self.latex_config,key = "Calculate Shear Component1",jupyter_display=jupyter_display, precision=3, override=jupyter_format)
         def _calculation_l_shear_rupture_path(A_gp,N_r,d_bolt,t,pattern):
             A_hole = (N_r - 0.5) * d_bolt * t 
             A_net = A_gp - A_hole
             return A_net
-        @auto_add_subtitle(self.latex_config,key = "Calculate Shear Component2")
-        @handcalc(jupyter_display=jupyter_display, precision=3, override=jupyter_format)
+        @optional_reporting_handcalc(self.latex_config,key = "Calculate Shear Component2",jupyter_display=jupyter_display, precision=3, override=jupyter_format)
         def _calculation_l_tension_rupture_path(S_r,N_r,L_ev,d_bolt,t,pattern):
             l_gross = S_r * (N_r - 1) + L_ev
             A_hole = (N_r - 0.5) * d_bolt
             l_net = l_gross - A_hole
             A_net = l_net * t 
             return A_net
-        @auto_add_subtitle(self.latex_config,key = "Calculate Shear Component2")
-        @handcalc(jupyter_display=jupyter_display, precision=3, override=jupyter_format)
+
+        @optional_reporting_handcalc(self.latex_config,key = "Calculate Shear Component2",jupyter_display=jupyter_display, precision=3, override=jupyter_format)
         def _calculation_u_tension_rupture_path(S_r,N_r,d_bolt,t,width) -> float:
             l_g = S_r * (N_r - 1)
             A_hole = (N_r - 1) * d_bolt
@@ -810,8 +820,7 @@ class BlockShearCalculator:
             return A_net
 # net_area = min(A_net_1, A_net_2)
 # return net_area
-        @auto_add_subtitle(self.latex_config, key = "Calculate Shear Component3")
-        @handcalc(jupyter_display=jupyter_display, precision=3, override=jupyter_format)
+        @optional_reporting_handcalc(self.latex_config,key = "Calculate Shear Component3",jupyter_display=jupyter_display, precision=3, override=jupyter_format)
         def _calculation_block_shear(F_y,F_u,A_gv,A_nv,A_nt,load_condition):
             U_bs = 1
             V_n_1 = 0.60 * F_y * A_gv
@@ -822,84 +831,28 @@ class BlockShearCalculator:
         if "L" in self.failure_pattern  :
             pattern = "L"
             N_para,S_para,l_e_para,N_perp,S_perp,L_e_perp = self.get_properties("axial")
-            latex_A_g_shear,A_g_shear = _calculation_l_shear_yield_path(S_para,N_para,l_e_para,t,pattern)
-            latex_A_n_shear,A_n_shear = _calculation_l_shear_rupture_path(A_g_shear,N_para,d_bolt,t,pattern)
-            latex_A_n_tension,A_n_tension = _calculation_l_tension_rupture_path(S_perp,N_perp,L_e_perp,d_bolt,t,pattern)
-            _calculation_block_shear(F_y = F_y,F_u = F_u,A_gv = A_g_shear,A_nv = A_n_shear,A_nt = A_n_tension,load_condition=load_condition)
+            A_g_shear = _calculation_l_shear_yield_path(S_para,N_para,l_e_para,t,pattern)
+            A_n_shear = _calculation_l_shear_rupture_path(A_g_shear,N_para,d_bolt,t,pattern)
+            A_n_tension = _calculation_l_tension_rupture_path(S_perp,N_perp,L_e_perp,d_bolt,t,pattern)
+            capacity=_calculation_block_shear(F_y = F_y,F_u = F_u,A_gv = A_g_shear,A_nv = A_n_shear,A_nt = A_n_tension,load_condition=load_condition)
         elif "U" in  self.failure_pattern:
             pattern = "U"
             N_para,S_para,l_e_para,N_perp,S_perp,L_e_perp = self.get_properties("axial")
-            latex_A_g_shear,A_g_shear = _calculation_l_shear_yield_path(S_r=S_para,N_r=N_para,L_eh=l_e_para,t=t,pattern = pattern)
-            latex_A_n_shear,A_n_shear = _calculation_l_shear_rupture_path(A_g_shear,N_para,d_bolt,t,pattern) 
-            latex_A_n_tension,A_n_tension = _calculation_u_tension_rupture_path(S_perp,N_perp,d_bolt,t,width,pattern)
-            _calculation_block_shear(F_y = F_y,F_u = F_u,A_gv = A_g_shear,A_nv = A_n_shear,A_nt = A_n_tension,load_condition=load_condition)
+            A_g_shear = _calculation_l_shear_yield_path(S_r=S_para,N_r=N_para,L_eh=l_e_para,t=t,pattern = pattern)
+            A_n_shear = _calculation_l_shear_rupture_path(A_g_shear,N_para,d_bolt,t,pattern) 
+            A_n_tension = _calculation_u_tension_rupture_path(S_perp,N_perp,d_bolt,t,width,pattern)
+            capacity=_calculation_block_shear(F_y = F_y,F_u = F_u,A_gv = A_g_shear,A_nv = A_n_shear,A_nt = A_n_tension,load_condition=load_condition)
+        return capacity
         # A_g_shear = _calculation_l_shear_yield_path(S_r,N_r,L_eh,t,load_condition)
     def calculate_capacity(self, resistance_factor: float = 0.75, debug: bool = False) -> float:
         """
         Calculates the block shear capacity with detailed logging of all inputs and outputs.
         """
-        logger = DebugLogger(f"Block Shear {self.failure_pattern}-Pattern", debug)
-        
-        Ubs = 1.0  # Shear lag factor, typically 1.0 for block shear
+
         Fu, Fy = self.member.Fu, self.member.Fy
         
-        logger.add_input("Member Type", self.member.Type)
-        logger.add_input("Failure Pattern", self.failure_pattern)
-        logger.add_input("Ultimate Strength (Fu)", Fu)
-        logger.add_input("Yield Strength (Fy)", Fy)
-        logger.add_input("Thickness (t)", self.thickness)
-        logger.add_input("Bolt Hole Diameter", self.bolt_hole_diameter)
-        logger.add_input("Shear Lag Factor (Ubs)", Ubs)
-        logger.add_input("Resistance Factor (phi)", resistance_factor)
-        logger.add_input("Loading Condition Multiplier", self.loading_condition)
-        logger.add_input("--- Bolt Configuration ---", "")
-        logger.add_input("Bolt Rows (n_rows)", self.bolt_config.n_rows)
-        logger.add_input("Bolt Columns (n_columns)", self.bolt_config.n_columns)
-        logger.add_input("Row Spacing", self.bolt_config.row_spacing)
-        logger.add_input("Column Spacing", self.bolt_config.column_spacing)
-        logger.add_input("Vertical Edge Distance", self.bolt_config.edge_distance_vertical)
-        logger.add_input("Horizontal Edge Distance", self.bolt_config.edge_distance_horizontal)
-        logger.add_input("------------------------", "")
 
-        tension_rupture_component = 0.0
-
-        if "L" in self.failure_pattern:
-            shear_yield_component = self._calculate_l_shear_yield_path(debug=debug)
-            shear_rupture_component = self._calculate_l_shear_rupture_path(debug=debug)
-            tension_rupture_component = self._calculate_l_tension_rupture_path(debug=debug)
-        elif "U" in self.failure_pattern:
-            shear_yield_component = self._calculate_l_shear_yield_path(debug=debug) * 2
-            shear_rupture_component = self._calculate_l_shear_rupture_path(debug=debug) * 2
-            tension_rupture_component = self._calculate_u_tension_rupture_path(debug=debug)
-
-        logger.add_calculation("Gross Shear Area (Agv)", shear_yield_component)
-        logger.add_calculation("Net Shear Area (Anv)", shear_rupture_component)
-        logger.add_calculation("Net Tension Area (Ant)", tension_rupture_component)
-
-        # --- AISC J4.3 ---
-        # The available shear strength shall be the lesser of shear yielding and shear rupture
-        shear_yield_strength = 0.60 * Fy * shear_yield_component
-        shear_rupture_strength = 0.60 * Fu * shear_rupture_component
-        governing_shear_strength = min(shear_yield_strength, shear_rupture_strength)
-        
-        logger.add_calculation("Shear Yielding Strength (0.6 * Fy * Agv)", shear_yield_strength)
-        logger.add_calculation("Shear Rupture Strength (0.6 * Fu * Anv)", shear_rupture_strength)
-        logger.add_output("Governing Shear Strength", governing_shear_strength)
-
-        # The available tensile strength
-        tension_rupture_strength = Ubs * Fu * tension_rupture_component
-        logger.add_calculation("Tension Rupture Strength (Ubs * Fu * Ant)", tension_rupture_strength)
-
-        # Nominal capacity is the sum of the tension rupture and the governing shear strength
-        nominal_capacity = tension_rupture_strength + governing_shear_strength
-        logger.add_calculation("Nominal Capacity (Rn = Tension Strength + Shear Strength)", nominal_capacity)
-
-        # Final design capacity
-        design_capacity = resistance_factor * nominal_capacity
-        logger.add_output("Design Capacity (phi * Rn)", design_capacity)
-        
-        logger.display()
-        _calculation = self._calculation(d_bolt=self.bolt_hole_diameter,t=self.thickness,width=self.width,load_condition=self.loading_condition,F_y=Fy,F_u=Fu,)
+        design_capacity = self._calculation(d_bolt=self.bolt_hole_diameter,t=self.thickness,width=self.width,load_condition=self.loading_condition,F_y=Fy,F_u=Fu,)
         return design_capacity
 
     def check_dcr(self, **kwargs) -> float:
@@ -2154,3 +2107,4 @@ class WeldCalculator:
 
 # aisc_360_14th = [BoltShearCalculator, BoltTensileCalculator,TensileYieldingCalculator,TensileRuptureCalculator,BlockShearCalculator]
 aisc_360_14th = [BoltShearCalculator,BoltTensileCalculator,BlockShearCalculator]
+# aisc_360_14th = [BoltShearCalculator]

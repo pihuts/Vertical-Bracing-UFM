@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
-from .data_models import Connection
+from .data_models import Connection,BoltConfiguration,WeldConfiguration,GlobalLoads
 from .calculations import aisc_360_14th,LimitState
+from .connection_factory import ConnectionFactory
 from typing import List
 import pandas as pd
 class DesignCode:
@@ -19,3 +20,53 @@ class DesignCode:
                 return pd.DataFrame(results),sol_latexs
             else:
                 raise ValueError("No limit states defined for this design code.")
+            
+import itertools
+from dataclasses import dataclass, field
+from typing import Literal, Dict, Any, Optional, Union, List
+from functools import lru_cache
+import math
+import time
+
+
+
+# ============================================================================
+# GENERATOR FACTORIES (Improvement #1 - Fix Generator Exhaustion)
+# ============================================================================
+
+def create_bolt_configs(param_grid):
+    """Factory function to create fresh bolt configuration generator"""
+    return (BoltConfiguration(**dict(zip(param_grid.keys(), combo))) 
+            for combo in itertools.product(*param_grid.values()))
+
+def create_all_connections_generator(bolt_grid, member_a, member_b,loads):
+    """
+    Master generator that creates all valid connection combinations.
+    Uses factory functions to avoid generator exhaustion.
+    """
+    for bolt_config in create_bolt_configs(bolt_grid):
+                    # Apply pruning if available
+                    yield ConnectionFactory.create_connection(
+                        member_a=member_a,
+                        member_b=member_b,
+                        global_loads=loads,
+                        component_a="total",
+                        component_b="total",
+                        connection_configuration=bolt_config
+                    )
+
+def create_all_connections_list_comprehension(bolt_grid, member_a, member_b, loads):
+    """
+    Creates and returns a list of all connections using a concise list comprehension.
+    """
+    return [
+        ConnectionFactory.create_connection(
+                        member_a=member_a,
+                        member_b=member_b,
+                        global_loads=loads,
+                        component_a="total",
+                        component_b="total",
+                        connection_configuration=bolt_config
+        )
+        for bolt_config in create_bolt_configs(bolt_grid)
+    ]
