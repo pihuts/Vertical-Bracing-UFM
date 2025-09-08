@@ -265,9 +265,9 @@ class GlobalLoads:
     mx: float = 0.0
     my: float = 0.0
     mz: float = 0.0
-    direct_load : float = 0.0 # this is for cases like bracing
-    fx_eq = 0.0  # equivalent F load 
-    r_w = 0.0  # load for weld
+    direct_load : float = 0.0 
+    fx_eq = 0.0   
+    r_w = 0.0  
 
     def __post_init__(self):
         object.__setattr__(self, 'fx', self.fx * si.kip if isinstance(self.fx, (int, float)) else self.fx)
@@ -277,6 +277,8 @@ class GlobalLoads:
         object.__setattr__(self, 'my', self.my * si.kip if isinstance(self.my, (int, float)) else self.my)
         object.__setattr__(self, 'mz', self.mz * si.kip if isinstance(self.mz, (int, float)) else self.mz)
         object.__setattr__(self, 'direct_load', self.direct_load * si.kip if isinstance(self.direct_load, (int, float)) else self.direct_load)
+        object.__setattr__(self, 'fx_eq', self.fx_eq * si.kip if isinstance(self.fx_eq, (int, float)) else self.fx_eq)
+        object.__setattr__(self, 'r_w', self.r_w * si.kip if isinstance(self.r_w, (int, float)) else self.r_w)
 
 @dataclass(frozen=True)
 class BeamColumnTransferredForce:
