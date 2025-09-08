@@ -26,6 +26,8 @@ class ConnectionFactory:
     ) -> Connection:
         """Helper method to create a Connection with common logic."""
         # Set roles from members if not provided
+        role_a = member_a.Role if hasattr(member_a, 'Role') else None
+        role_b = member_b.Role if hasattr(member_b, 'Role') else None
         if role_a is None:
             role_a = getattr(member_a, 'Role', None)
         if role_b is None:

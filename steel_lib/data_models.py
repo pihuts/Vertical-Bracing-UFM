@@ -265,9 +265,9 @@ class GlobalLoads:
     mx: float = 0.0
     my: float = 0.0
     mz: float = 0.0
-    direct_load : float = 0.0 
-    fx_eq = 0.0   
-    r_w = 0.0  
+    direct_load : float = 0.0
+    fx_eq: float = 0.0
+    r_w: float = 0.0
 
     def __post_init__(self):
         object.__setattr__(self, 'fx', self.fx * si.kip if isinstance(self.fx, (int, float)) else self.fx)
