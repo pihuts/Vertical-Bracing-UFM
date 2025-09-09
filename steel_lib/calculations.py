@@ -57,6 +57,7 @@ def optional_reporting_handcalc(config_object, *, key: str, detailed: bool = Fal
 
                 # 1. Programmatically apply the @handcalc decorator to the original function
                 #    using the provided kwargs.
+
                 handcalc_decorated_func = handcalc(**handcalc_kwargs)(func)
 
                 # 2. Execute the handcalc-decorated function to get the (latex, result) tuple.
@@ -250,69 +251,7 @@ def check_dcr(capacity: float, demand: float, limit_state_name: str, debug: bool
     dcr = result(demand=demand, capacity=capacity, dcr=dcr, name=limit_state_name)
     return dcr
 
-# @dataclass(frozen=True)
-# class AppliedLoads:
-#     """
-#     A single, immutable container for all initial and calculated loads.
-#     Should be constructed using one of its factory classmethods.
-#     """
-#     # Initial Design Loads
-#     initial_brace_load: si.kip
-#     initial_beam_shear: si.kip
-#     initial_transfer_force: si.kip
 
-#     # Calculated Interface Forces
-#     gusset_to_column_shear: si.kip
-#     gusset_to_column_normal: si.kip
-#     gusset_to_beam_shear: si.kip
-#     gusset_to_beam_normal: si.kip
-
-#     gusset_beam_interface: DesignLoads
-#     gusset_endplate_interface: DesignLoads
-#     beam_column_interface:DesignLoads
-
-#     @classmethod
-#     def from_ufm(
-#         cls,
-#         design_loads: "DesignLoads", # We'll define this helper next
-#         multipliers: "LoadMultipliers"
-#     ) :
-#         """
-#         Factory method to create an AppliedLoads object using the
-#         Uniform Force Method calculations.
-#         """
-#         # Perform the load distribution calculations here
-#         vuc = multipliers.vertical_force_column_interface * design_loads.Pu
-#         vub = multipliers.vertical_force_beam_interface * design_loads.Pu
-#         huc = multipliers.horizontal_force_column_interface * design_loads.Pu
-#         hub = multipliers.horizontal_force_beam_interface * design_loads.Pu
-        
-#         # Add Aub and Vu to the column interface forces
-#         total_column_shear = huc + design_loads.Vu
-#         total_column_normal = vuc + design_loads.Aub
-#         total_column_shear = huc 
-#         total_column_normal = vuc 
-#         # Calculate gusset to beam forces
-#         gusset_beam_interface = DesignLoads(
-#             Pu=vub,
-#             Vu=hub,
-#         )
-#         # Calculate gusset to endplate forces
-#         gusset_endplate_interface = DesignLoads(
-#             Pu=total_column_shear,
-#             Vu=total_column_normal,
-#         )
-#         # Calculate beam-column interface forces
-
-#         return cls(
-#             initial_brace_load=design_loads.Pu,
-#             initial_beam_shear=design_loads.Vu,
-#             initial_transfer_force=design_loads.Aub,
-#             gusset_to_column_shear=total_column_shear,
-#             gusset_to_column_normal=total_column_normal,
-#             gusset_to_beam_shear=hub,
-#             gusset_to_beam_normal=vub,
-#         )
     
 class LimitState(ABC):
     """
@@ -329,12 +268,13 @@ class LimitState(ABC):
         pass
 
     @abstractmethod
-    def check_dcr(self, *args, **kwargs) -> float:
+    def check_dcr(self, detailed) -> float:
         """
         Abstract method to calculate the demand-to-capacity ratio (DCR).
         Must be implemented by all subclasses.
         """
         pass
+
 def area_circular_bolt(diameter: si.inch) :
     """Calculates the gross area of a circular bolt."""
     A_bolt = diameter**2 / 4 * pi
@@ -343,63 +283,160 @@ def area_circular_bolt(diameter: si.inch) :
 class BoltShearCalculator(LimitState):
     """
     Calculates the shear strength of a single bolt based on its properties.
+
+    This calculator determines the design shear strength of a bolt according to
+    AISC specifications. It uses the `forallpeople` library for unit-aware
+    calculations and can generate formatted LaTeX output via the `handcalcs`
+    library, as detailed in `forallpeople.md` and `handcalcs.md`.
+
+    Attributes:
+        endpoint (ConnectionEndpoint): The connection endpoint data, containing
+            member, loads, and connection configuration.
+        debug (bool): A flag to enable or disable detailed debug logging.
     """
-    def __init__(self, endpoint:ConnectionEndpoint,debug: bool = False):
+    def __init__(self, endpoint: ConnectionEndpoint, debug: bool = False):
         """
-        Initializes the calculator with a Connection object.
-        Assumes a 'bolted' connection configuration.
+        Initializes the BoltShearCalculator.
+
+        Args:
+            endpoint (ConnectionEndpoint): The connection endpoint containing all
+                necessary data for the calculation.
+            debug (bool, optional): Enables detailed logging. Defaults to False.
         """
         self.name = "Bolt Shear Strength"
         self.endpoint = endpoint
-        self.bolt_config: BoltConfiguration = endpoint.connection_configuration
-        self.bolt_area = area_circular_bolt(self.bolt_config.bolt_diameter)
-        self.fnv = self.bolt_config.bolt_grade.Fnv
-        self.no_bolts = self.bolt_config.n_rows * self.bolt_config.n_columns
-        self.design_method = endpoint.design_method
         self._debug = debug
+
+        # --- Configuration ---
+        # Extracts the bolt configuration from the endpoint.
+        self.bolt_config: BoltConfiguration = endpoint.connection_configuration
+        self.design_method = endpoint.design_method
+
+        # --- Bolt Properties ---
+        # Calculates the gross area of a single bolt.
+        self.bolt_area = area_circular_bolt(self.bolt_config.bolt_diameter)
+        # Nominal shear stress from the bolt material grade.
+        self.fnv = self.bolt_config.bolt_grade.Fnv
+        # Total number of bolts in the connection group.
+        self.no_bolts = self.bolt_config.n_rows * self.bolt_config.n_columns
+
+        # --- Reporting ---
+        # Initializes a configuration object for LaTeX report generation.
+        # See handcalcs.md for more on report generation.
         self.latex_config = LatexConfig(main_title="Bolt Shear Calculation")
+
     @property
-    def demand_loads(self) -> float:
-        """Returns the shear demand on the bolt."""
-        self.loads_vu = get_load(self.endpoint, "Vu")
-        self.loads_pu = get_load(self.endpoint, "Pu")
-        return ((self.loads_vu**2 + self.loads_pu**2) **0.5).to("kip")/self.no_bolts
+    def demand_loads(self) -> si:
+        """
+        Calculates the resultant shear demand per bolt.
+
+        This property retrieves the in-plane shear (Vu) and axial (Pu) forces,
+        calculates the vector sum to find the resultant force, and then divides
+        by the total number of bolts. The `forallpeople` library is used to
+        ensure correct unit handling (e.g., converting to 'kip').
+
+        Returns:
+            si: The shear demand on a single bolt, as a `forallpeople` object.
+        """
+        loads_vu = get_load(self.endpoint, "Vu")
+        loads_pu = get_load(self.endpoint, "Pu")
+        # Calculate the resultant force and divide by the number of bolts.
+        resultant_force = (loads_vu**2 + loads_pu**2) ** 0.5
+        return resultant_force.to("kip") / self.no_bolts
+
     @property
     def resistance_factor(self) -> float:
-        """Returns the resistance factor for bolt shear."""
-        if self.design_method == "LRFD":
-            return 0.75
-        elif self.design_method == "ASD":
-            return 2
+        """
+        Returns the resistance factor (phi) or safety factor (Omega) for bolt shear.
 
-    def _calculations(self,F_nv: float,A_bolt: float,N_shear_planes: int,phi: float): 
-        @optional_reporting_handcalc(config_object=self.latex_config,key="Bolt Shear",jupyter_display=jupyter_display, precision=3, override=jupyter_format)
-        def calculations(self,F_nv: float,A_bolt: float,N_shear_planes: int,phi: float):
+        Based on the specified design method:
+        - LRFD (Load and Resistance Factor Design): phi = 0.75
+        - ASD (Allowable Strength Design): Omega = 2.0
+
+        Returns:
+            float: The appropriate factor for the design method.
+        """
+        if self.design_method == "LRFD":
+            return 0.75  # phi factor for LRFD
+        elif self.design_method == "ASD":
+            return 2.0  # Omega factor for ASD
+
+    def _calculate_design_strength(
+        self, F_nv: si, A_bolt: si, N_shear_planes: int, phi: float,detailed:bool
+    ) -> si:
+        """
+        Performs the core calculation for bolt shear design strength.
+
+        This method uses the @optional_reporting_handcalc decorator to wrap the
+        calculation logic. When enabled, this generates a formatted LaTeX string
+        of the calculation, as described in `handcalcs.md`.
+
+        Args:
+            F_nv (si): Nominal shear stress of the bolt material.
+            A_bolt (si): Gross area of the bolt.
+            N_shear_planes (int): Number of shear planes (e.g., 1 for single shear).
+            phi (float): The resistance factor (or safety factor for ASD).
+
+        Returns:
+            si: The calculated design shear strength for a single bolt.
+        """
+        # This decorated inner function performs the calculation and, if detailed
+        # reporting is enabled, generates a LaTeX representation of the steps.
+        @optional_reporting_handcalc(
+            config_object=self.latex_config,
+            key="Bolt Shear",
+            jupyter_display=jupyter_display,
+            precision=3,
+            override=jupyter_format,
+            detailed=detailed # Control reporting with the debug flag
+        )
+        def perform_calculation(F_nv: si, A_bolt: si, N_shear_planes: int, phi: float):
             nominal_strength = F_nv * A_bolt * N_shear_planes
             design_strength = phi * nominal_strength
             return design_strength
 
-        result =  calculations(self,F_nv = F_nv,A_bolt= A_bolt,N_shear_planes= N_shear_planes,phi = phi)
-        return result
-    def calculate_capacity(self
-    ) -> float:
+        return perform_calculation(
+            F_nv=F_nv, A_bolt=A_bolt, N_shear_planes=N_shear_planes, phi=phi
+        )
+
+    def calculate_capacity(self,detailed:bool = False) -> si:
         """
-        Calculates the design shear strength of the bolt.
+        Calculates the final design shear strength of a single bolt.
+
+        This method orchestrates the calculation by gathering the necessary
+        inputs (number of shear planes, resistance factor) and calling the
+        core calculation method.
+
+        Returns:
+            si: The design shear strength as a `forallpeople` object.
         """
-        
         number_of_shear_planes = self.endpoint.shear_condition
-        resistance_factor = self.resistance_factor
+        phi = self.resistance_factor
 
-        design_strength = self._calculations(self.fnv,self.bolt_area,number_of_shear_planes,resistance_factor)
-
-
+        design_strength = self._calculate_design_strength(
+            F_nv=self.fnv,
+            A_bolt=self.bolt_area,
+            N_shear_planes=number_of_shear_planes,
+            phi=phi,
+            detailed=detailed
+        )
         return design_strength
 
-    def check_dcr(self) -> float:
-        """Calculates the demand-to-capacity ratio for Fnv."""
+    def check_dcr(self,detailed:bool = False) -> tuple[result, LatexConfig]:
+        """
+        Calculates the demand-to-capacity ratio (DCR) for bolt shear.
+
+        Compares the calculated shear demand per bolt against the design shear
+        capacity of a single bolt.
+
+        Returns:
+            tuple[result, LatexConfig]: A tuple containing the DCR result object
+            and the LaTeX configuration object for reporting.
+        """
         demand_force = self.demand_loads
-        capacity = self.calculate_capacity()
-        return check_dcr(capacity, abs(demand_force), self.name),self.latex_config
+        capacity = self.calculate_capacity(detailed)
+        dcr_result = check_dcr(capacity, abs(demand_force), self.name, debug=self._debug)
+        return dcr_result, self.latex_config
         
     # def calculate_capacity_fnt(
     #     self,
@@ -461,10 +498,8 @@ class BoltTensileCalculator(LimitState):
             return 0.75
         elif self.design_method == "ASD":
             return 2
-    @lru_cache(maxsize=512)
-    def _calculations(self,Vu,no_bolts,F_nv,F_nt_,A_bolt,phi):
-
-        @optional_reporting_handcalc(config_object=self.latex_config, key = "Parameters",jupyter_display=jupyter_display, precision=3, override="params")
+    def _calculations(self,Vu,no_bolts,F_nv,F_nt_,A_bolt,phi,detailed:bool):
+        @optional_reporting_handcalc(config_object=self.latex_config, detailed=detailed, key = "Parameters",jupyter_display=jupyter_display, precision=3, override="params")
         def parameters(Vu,no_bolts,F_nv,F_nt_,A_bolt,phi):
             Vu = Vu
             no_bolts = no_bolts
@@ -473,7 +508,7 @@ class BoltTensileCalculator(LimitState):
             A_bolt = A_bolt
             phi = phi
 
-        @optional_reporting_handcalc(config_object=self.latex_config, key = "Bolt Tensile Modified Strength Calculations",jupyter_display=jupyter_display, precision=3, override=jupyter_format)
+        @optional_reporting_handcalc(config_object=self.latex_config, key = "Bolt Tensile Modified Strength Calculations", detailed=detailed,jupyter_display=jupyter_display, precision=3, override=jupyter_format)
         def calculations(Vu,no_bolts,F_nv,F_nt_,A_bolt,phi):
             shear_bolt = Vu / no_bolts
             F_rv = shear_bolt/A_bolt
@@ -482,10 +517,10 @@ class BoltTensileCalculator(LimitState):
             F_nt = min(F_prime_nt, F_nt_) * A_bolt * phi
             return F_nt
         
-        result = calculations(Vu,no_bolts,F_nv,F_nt_,A_bolt,phi)
+        result = calculations(Vu=Vu,no_bolts=no_bolts,F_nv=F_nv,F_nt_=F_nt_,A_bolt=A_bolt,phi=phi)
         return result
     def calculate_capacity(
-        self
+        self,detailed:bool
     ):
         """
         Calculates the modified design tensile strength of the bolt, considering interaction with shear.
@@ -502,13 +537,13 @@ class BoltTensileCalculator(LimitState):
 
 
 
-        final_fnt_modified =self._calculations(Vu=demand_force_shear,no_bolts=self.no_bolts,F_nv=self.bolt_config.bolt_grade.Fnv,F_nt_=self.bolt_config.bolt_grade.Fnt,A_bolt=self.bolt_area,phi=resistance_factor)
+        final_fnt_modified =self._calculations(Vu=demand_force_shear,no_bolts=self.no_bolts,F_nv=self.bolt_config.bolt_grade.Fnv,F_nt_=self.bolt_config.bolt_grade.Fnt,A_bolt=self.bolt_area,phi=resistance_factor,detailed=detailed)
         return final_fnt_modified
-    
-    def check_dcr(self) -> float:
+
+    def check_dcr(self,detailed:bool = False) -> float:
         """Calculates the demand-to-capacity ratio for Fnt."""
         demand_load = get_load(self.endpoint, "out_of_plane_force")
-        capacity = self.calculate_capacity()
+        capacity = self.calculate_capacity(detailed=detailed)
         return check_dcr(capacity, abs(demand_load)/self.no_bolts, "Bolt Tensile Strength"),self.latex_config
     
     
@@ -689,99 +724,6 @@ class BlockShearCalculator:
 
     # --- Calculation methods now correctly include loading_condition ---
 
-    def _calculate_l_shear_yield_path(self, debug=False) -> float:
-
-        logger = DebugLogger("L-Pattern Gross Shear Area (Agv)", debug)
-        # spacing, rows, edge_dist = (self.bolt_config.row_spacing, self.bolt_config.n_rows, self.bolt_config.edge_distance_vertical) if self.loading_orientation == "Shear" else (self.bolt_config.column_spacing, self.bolt_config.n_columns, self.bolt_config.edge_distance_horizontal)
-        spacing, rows, edge_dist = self.bolt_config.row_spacing, self.bolt_config.n_rows, self.bolt_config.edge_distance_vertical
-
-        logger.add_input("Spacing", spacing)
-        logger.add_input("Rows/Columns", rows)
-        logger.add_input("Edge Distance", edge_dist)
-        
-        length = spacing * (rows - 1) + edge_dist
-        logger.add_calculation("Gross Length (Lgv = spacing * (rows - 1) + edge_dist)", length)
-        
-        area = length * self.thickness * self.loading_condition
-
-        logger.add_output("Gross Shear Area (Agv = Lgv * t * loading_condition)", area)
-        logger.display()
-
-        return area
-
-    def _calculate_l_shear_rupture_path(self, debug=False) -> float:
-        logger = DebugLogger("L-Pattern Net Shear Area (Anv)", debug)
-        gross_area = self._calculate_l_shear_yield_path(debug=False) # Don't double-log inputs
-        # rows = self.bolt_config.n_rows if self.loading_orientation == "Shear" else self.bolt_config.n_columns
-        rows = self.bolt_config.n_rows
-        logger.add_input("Gross Shear Area (Agv)", gross_area)
-        logger.add_input("Rows/Columns", rows)
-        logger.add_input("Bolt Hole Diameter", self.bolt_hole_diameter)
-        logger.add_input("Thickness", self.thickness)
-
-        hole_area_deduction = (rows - 0.5) * self.bolt_hole_diameter * self.thickness * self.loading_condition
-        logger.add_calculation("Hole Deduction ((rows - 0.5) * d_hole * t)", hole_area_deduction)
-
-        net_area = gross_area - hole_area_deduction
-        logger.add_output("Net Shear Area (Anv = Agv - deduction)", net_area)
-        logger.display()
-        return net_area
-    
-    def _calculate_l_tension_rupture_path(self, debug=False) -> float:
-        logger = DebugLogger("L-Pattern Net Tension Area (Ant)", debug)
-        # if self.loading_orientation == "Axial":
-        #     spacing, rows, edge_dist = self.bolt_config.row_spacing, self.bolt_config.n_rows, self.bolt_config.edge_distance_vertical
-        # else:
-        #     spacing, rows, edge_dist = self.bolt_config.column_spacing, self.bolt_config.n_columns, self.bolt_config.edge_distance_horizontal
-        spacing, rows, edge_dist = self.bolt_config.row_spacing, self.bolt_config.n_rows, self.bolt_config.edge_distance_vertical
-        logger.add_input("Spacing", spacing)
-        logger.add_input("Rows/Columns", rows)
-        logger.add_input("Edge Distance", edge_dist)
-        logger.add_input("Bolt Hole Diameter", self.bolt_hole_diameter)
-        logger.add_input("Thickness", self.thickness)
-
-        gross_length = spacing * (rows - 1) + edge_dist
-        logger.add_calculation("Gross Tension Length", gross_length)
-        
-        hole_deduction_length = (rows - 0.5) * self.bolt_hole_diameter
-        logger.add_calculation("Hole Deduction Length", hole_deduction_length)
-
-        net_length = gross_length - hole_deduction_length
-        logger.add_calculation("Net Length (Lnt)", net_length)
-
-        net_area = net_length * self.thickness * self.loading_condition
-        logger.add_output("Net Tension Area (Ant = Lnt * t * loading_condition)", net_area)
-        logger.display()
-        return net_area
-    
-
-    def _calculate_u_tension_rupture_path(self, debug=False) -> float:
-        logger = DebugLogger("U-Pattern Net Tension Area (Ant)", debug)
-        spacing, rows = self.bolt_config.row_spacing, self.bolt_config.n_rows
-        
-        logger.add_input("Spacing", spacing)
-        logger.add_input("Rows", rows)
-        logger.add_input("Bolt Hole Diameter", self.bolt_hole_diameter)
-        logger.add_input("Thickness", self.thickness)
-
-        gross_length = spacing * (rows - 1)
-        logger.add_calculation("Gross Length", gross_length)
-
-        hole_deduction_length = (rows - 1) * self.bolt_hole_diameter
-        logger.add_calculation("Hole Deduction Length", hole_deduction_length)
-
-        net_length = gross_length - hole_deduction_length
-        logger.add_calculation("Net Length (Lnt)", net_length)
-        if self.width:
-            net_area0 = net_length * self.thickness * self.loading_condition
-            net_area1 = ((self.width - self.row_spacing)/2 - self.bolt_hole_diameter/2) * self.thickness * 2
-            net_area = min(net_area0, net_area1)
-        else:
-            net_area = net_length * self.thickness * self.loading_condition
-        
-        logger.add_output("Net Tension Area (Ant = Lnt * t * loading_condition)", net_area)
-        logger.display()
-        return net_area  # Ensure we return the minimum of the two calculated areas
     def get_properties(self,load_type):
         if load_type == "axial":
             N_para,S_para,l_e_para,N_perp,S_perp,L_e_perp = self.bolt_config.n_columns,self.bolt_config.column_spacing,self.bolt_config.edge_distance_horizontal, self.bolt_config.n_rows,self.bolt_config.row_spacing,self.bolt_config.edge_distance_vertical
@@ -789,19 +731,19 @@ class BlockShearCalculator:
             N_para,S_para,l_e_para,N_perp,S_perp,L_e_perp = self.bolt_config.n_rows,self.bolt_config.row_spacing,self.bolt_config.edge_distance_vertical, self.bolt_config.n_columns,self.bolt_config.column_spacing,self.bolt_config.edge_distance_horizontal
         return N_para,S_para,l_e_para,N_perp,S_perp,L_e_perp
     @lru_cache(maxsize=512)
-    def _calculation(self,d_bolt,t,width,load_condition,F_y,F_u):
-        @optional_reporting_handcalc(self.latex_config,key = "Calculate Shear Component",jupyter_display=jupyter_display, precision=3, override=jupyter_format)
+    def _calculation(self,d_bolt,t,width,load_condition,F_y,F_u,detailed: bool = False):
+        @optional_reporting_handcalc(self.latex_config,detailed=detailed,key = "Calculate Shear Component",jupyter_display=jupyter_display, precision=3, override=jupyter_format)
         def _calculation_l_shear_yield_path(S_r,N_r,L_eh,t,pattern):
             l = S_r * (N_r - 1) + L_eh
             A_gp = l * t 
             return A_gp
 
-        @optional_reporting_handcalc(self.latex_config,key = "Calculate Shear Component1",jupyter_display=jupyter_display, precision=3, override=jupyter_format)
+        @optional_reporting_handcalc(self.latex_config,detailed=detailed,key = "Calculate Shear Component1",jupyter_display=jupyter_display, precision=3, override=jupyter_format)
         def _calculation_l_shear_rupture_path(A_gp,N_r,d_bolt,t,pattern):
             A_hole = (N_r - 0.5) * d_bolt * t 
             A_net = A_gp - A_hole
             return A_net
-        @optional_reporting_handcalc(self.latex_config,key = "Calculate Shear Component2",jupyter_display=jupyter_display, precision=3, override=jupyter_format)
+        @optional_reporting_handcalc(self.latex_config,detailed=detailed,key = "Calculate Shear Component2",jupyter_display=jupyter_display, precision=3, override=jupyter_format)
         def _calculation_l_tension_rupture_path(S_r,N_r,L_ev,d_bolt,t,pattern):
             l_gross = S_r * (N_r - 1) + L_ev
             A_hole = (N_r - 0.5) * d_bolt
@@ -809,7 +751,7 @@ class BlockShearCalculator:
             A_net = l_net * t 
             return A_net
 
-        @optional_reporting_handcalc(self.latex_config,key = "Calculate Shear Component2",jupyter_display=jupyter_display, precision=3, override=jupyter_format)
+        @optional_reporting_handcalc(self.latex_config,detailed=detailed,key = "Calculate Shear Component2",jupyter_display=jupyter_display, precision=3, override=jupyter_format)
         def _calculation_u_tension_rupture_path(S_r,N_r,d_bolt,t,width) -> float:
             l_g = S_r * (N_r - 1)
             A_hole = (N_r - 1) * d_bolt
@@ -820,7 +762,7 @@ class BlockShearCalculator:
             return A_net
 # net_area = min(A_net_1, A_net_2)
 # return net_area
-        @optional_reporting_handcalc(self.latex_config,key = "Calculate Shear Component3",jupyter_display=jupyter_display, precision=3, override=jupyter_format)
+        @optional_reporting_handcalc(self.latex_config,key = "Calculate Shear Component3",detailed=detailed,jupyter_display=jupyter_display, precision=3, override=jupyter_format)
         def _calculation_block_shear(F_y,F_u,A_gv,A_nv,A_nt,load_condition):
             U_bs = 1
             V_n_1 = 0.60 * F_y * A_gv
@@ -844,7 +786,7 @@ class BlockShearCalculator:
             capacity=_calculation_block_shear(F_y = F_y,F_u = F_u,A_gv = A_g_shear,A_nv = A_n_shear,A_nt = A_n_tension,load_condition=load_condition)
         return capacity
         # A_g_shear = _calculation_l_shear_yield_path(S_r,N_r,L_eh,t,load_condition)
-    def calculate_capacity(self, resistance_factor: float = 0.75, debug: bool = False) -> float:
+    def calculate_capacity(self, resistance_factor: float = 0.75,detailed: bool = False, debug: bool = False) -> float:
         """
         Calculates the block shear capacity with detailed logging of all inputs and outputs.
         """
@@ -852,13 +794,13 @@ class BlockShearCalculator:
         Fu, Fy = self.member.Fu, self.member.Fy
         
 
-        design_capacity = self._calculation(d_bolt=self.bolt_hole_diameter,t=self.thickness,width=self.width,load_condition=self.loading_condition,F_y=Fy,F_u=Fu,)
+        design_capacity = self._calculation(d_bolt=self.bolt_hole_diameter,t=self.thickness,width=self.width,load_condition=self.loading_condition,F_y=Fy,F_u=Fu,detailed=detailed)
         return design_capacity
 
-    def check_dcr(self, **kwargs) -> float:
+    def check_dcr(self, detailed: bool = False) -> float:
         """Calculates the demand-to-capacity ratio."""
-        capacity = self.calculate_capacity(**kwargs)
-        return check_dcr(capacity, abs(self.loads.Pu), f"Block Shear {self.failure_pattern}-Pattern", **kwargs),self.latex_config
+        capacity = self.calculate_capacity(detailed=detailed)
+        return check_dcr(capacity, abs(self.loads.Pu), f"Block Shear {self.failure_pattern}-Pattern", detailed_report=detailed_report),self.latex_config
 
 class ConnectionCapacityCalculator:
     """
@@ -2106,5 +2048,5 @@ class WeldCalculator:
 
 
 # aisc_360_14th = [BoltShearCalculator, BoltTensileCalculator,TensileYieldingCalculator,TensileRuptureCalculator,BlockShearCalculator]
-aisc_360_14th = [BoltShearCalculator,BoltTensileCalculator,BlockShearCalculator]
+aisc_360_14th = [BoltTensileCalculator]
 # aisc_360_14th = [BoltShearCalculator]
