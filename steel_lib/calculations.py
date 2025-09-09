@@ -260,7 +260,7 @@ class LimitState(ABC):
     """
 
     @abstractmethod
-    def calculate_capacity(self, *args, **kwargs) -> float:
+    def _calculate_capacity(self, *args, **kwargs) -> float:
         """
         Abstract method to calculate the design capacity.
         Must be implemented by all subclasses.
@@ -361,9 +361,14 @@ class BoltShearCalculator(LimitState):
         elif self.design_method == "ASD":
             return 2.0  # Omega factor for ASD
 
-    def _calculate_design_strength(
-        self, F_nv: si, A_bolt: si, N_shear_planes: int, phi: float,detailed:bool
+    def _calculate_capacity(
+        self, detailed: bool
     ) -> si:
+        F_nv = self.fnv
+        A_bolt = self.bolt_area
+        N_shear_planes = self.endpoint.shear_condition
+        phi = self.resistance_factor
+        detailed = detailed
         """
         Performs the core calculation for bolt shear design strength.
 
@@ -380,47 +385,19 @@ class BoltShearCalculator(LimitState):
         Returns:
             si: The calculated design shear strength for a single bolt.
         """
+
+
         # This decorated inner function performs the calculation and, if detailed
         # reporting is enabled, generates a LaTeX representation of the steps.
-        @optional_reporting_handcalc(
-            config_object=self.latex_config,
-            key="Bolt Shear",
-            jupyter_display=jupyter_display,
-            precision=3,
-            override=jupyter_format,
-            detailed=detailed # Control reporting with the debug flag
-        )
+        @optional_reporting_handcalc(config_object=self.latex_config, key = "Bolt Tensile Modified Strength Calculations", detailed=detailed,jupyter_display=jupyter_display, precision=3, override=jupyter_format)
         def perform_calculation(F_nv: si, A_bolt: si, N_shear_planes: int, phi: float):
-            nominal_strength = F_nv * A_bolt * N_shear_planes
-            design_strength = phi * nominal_strength
-            return design_strength
+            V_n = F_nv * A_bolt * N_shear_planes
+            V_u = phi * V_n
+            return V_u
 
         return perform_calculation(
             F_nv=F_nv, A_bolt=A_bolt, N_shear_planes=N_shear_planes, phi=phi
         )
-
-    def calculate_capacity(self,detailed:bool = False) -> si:
-        """
-        Calculates the final design shear strength of a single bolt.
-
-        This method orchestrates the calculation by gathering the necessary
-        inputs (number of shear planes, resistance factor) and calling the
-        core calculation method.
-
-        Returns:
-            si: The design shear strength as a `forallpeople` object.
-        """
-        number_of_shear_planes = self.endpoint.shear_condition
-        phi = self.resistance_factor
-
-        design_strength = self._calculate_design_strength(
-            F_nv=self.fnv,
-            A_bolt=self.bolt_area,
-            N_shear_planes=number_of_shear_planes,
-            phi=phi,
-            detailed=detailed
-        )
-        return design_strength
 
     def check_dcr(self,detailed:bool = False) -> tuple[result, LatexConfig]:
         """
@@ -433,9 +410,11 @@ class BoltShearCalculator(LimitState):
             tuple[result, LatexConfig]: A tuple containing the DCR result object
             and the LaTeX configuration object for reporting.
         """
+        capacity = self._calculate_capacity(detailed = detailed
+
+        )
         demand_force = self.demand_loads
-        capacity = self.calculate_capacity(detailed)
-        dcr_result = check_dcr(capacity, abs(demand_force), self.name, debug=self._debug)
+        dcr_result = check_dcr(capacity, abs(demand_force), self.name)
         return dcr_result, self.latex_config
         
     # def calculate_capacity_fnt(
@@ -543,7 +522,7 @@ class BoltTensileCalculator(LimitState):
     def check_dcr(self,detailed:bool = False) -> float:
         """Calculates the demand-to-capacity ratio for Fnt."""
         demand_load = get_load(self.endpoint, "out_of_plane_force")
-        capacity = self.calculate_capacity(detailed=detailed)
+        capacity = self._calculate_capacity(detailed=detailed)
         return check_dcr(capacity, abs(demand_load)/self.no_bolts, "Bolt Tensile Strength"),self.latex_config
     
     
@@ -2048,5 +2027,5 @@ class WeldCalculator:
 
 
 # aisc_360_14th = [BoltShearCalculator, BoltTensileCalculator,TensileYieldingCalculator,TensileRuptureCalculator,BlockShearCalculator]
-aisc_360_14th = [BoltTensileCalculator]
-# aisc_360_14th = [BoltShearCalculator]
+# aisc_360_14th = [BoltTensileCalculator]
+aisc_360_14th = [BoltShearCalculator]

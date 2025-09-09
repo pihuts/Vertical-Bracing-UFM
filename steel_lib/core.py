@@ -20,6 +20,16 @@ class DesignCode:
                 return pd.DataFrame(results),sol_latexs
             else:
                 raise ValueError("No limit states defined for this design code.")
+    def workflow(self,connections:List[Connection],detailed:bool = False):
+        all_results = []
+        all_latexs = []
+        for conn in connections:
+            results_df, sol_latexs = self.check_limit_states(conn,detailed=detailed)
+            results_df['connection_id'] = conn.id
+            results_df['connection_name'] = conn.name
+            all_results.append(results_df)
+            all_latexs.append(sol_latexs)
+        return all_results,all_latexs
             
 import itertools
 from dataclasses import dataclass, field
