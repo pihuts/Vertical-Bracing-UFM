@@ -6,6 +6,7 @@ from .si_units import si
 import math
 from pydantic import BaseModel, ConfigDict
 from typing import Dict
+from .materials import Material, BoltGrade
 def get_component_from_string(component_str: str):
     """
     Safely retrieves a ConnectionComponent enum member from its string value.
@@ -15,6 +16,7 @@ def get_component_from_string(component_str: str):
         enum_member = ConnectionComponent(component_str)
         return enum_member
     except ValueError:
+        print(f"Unknown component: {component_str}")
         # This block runs if the string does not match any enum value.
         return None
 
@@ -26,6 +28,8 @@ class ConnectionComponent(Enum):
     FLANGE = "flange"
     LENGTH = "along_length"
     WIDTH = "along_width"
+    FLANGE_TOP = "flange_top"
+    FLANGE_BOTTOM = "flange_bottom"
 
 
 @dataclass(frozen=True)
@@ -41,12 +45,7 @@ class GeometricProperties:
     along_width: Optional[float] = None
 
 
-@dataclass(frozen=True)
-class Material:
-    """Represents the engineering properties of a steel material."""
-    Fy: si.ksi
-    Fu: si.ksi
-    E: si.ksi
+
 
 @dataclass
 class Plate:
@@ -129,12 +128,7 @@ class Plate:
     def gross_area_width(self):
         """Calculates the gross area of the plate."""
         return (self.width) * self.t if self.width else None
-@dataclass(frozen=True)
-class BoltGrade:
-    """Represents the nominal strength properties of a bolt material."""
-    name: str      # e.g., "A325"
-    Fnt: si.ksi  # Nominal tensile stress
-    Fnv: si.ksi  # Nominal shear stress
+
 
 @dataclass(slots=True, kw_only=True)
 class BoltConfiguration:
@@ -187,15 +181,16 @@ class BoltConfiguration:
 from steelpy import aisc
 from typing import Any, Type
 
-@dataclass(frozen=True)
-class WeldElectrode:
-    """
-    Represents the properties of a weld electrode. It's frozen because
-    these are standard, immutable values.
-    """
-    Fexx: float  # Nominal strength of the weld electrode (e.g., 70 ksi for E70XX)
+# @dataclass(frozen=True)
+# class WeldElectrode:
+#     """
+#     Represents the properties of a weld electrode. It's frozen because
+#     these are standard, immutable values.
+#     """
+#     Fexx: float  # Nominal strength of the weld electrode (e.g., 70 ksi for E70XX)
 
 WeldType = Literal["fillet", "groove"]
+
 
 @dataclass(slots=True, kw_only=True)
 class WeldConfiguration:
@@ -203,35 +198,31 @@ class WeldConfiguration:
     Defines the geometry and properties of a specific weld line in a connection.
     """
     weld_size: float
-    electrode: WeldElectrode  # Link to the WeldElectrode object
+    electrode: Literal["e60xx", "e70xx", "e80xx"] = "e70xx"  # Link to the WeldElectrode object
     weld_type: WeldType = "fillet" # Default to fillet, the most common type
     connection_type="welded",
-    length: float = 0.0
+    length: float = None
     
     def __post_init__(self):
+        # Convert units for dimensional attributes
         if isinstance(self.weld_size, (int, float)):
-            self.weld_size = self.weld_size * si.inch
+            self.weld_size *= si.inch
         if isinstance(self.length, (int, float)):
-            self.length = self.length * si.inch
-        # Check if the provided electrode is a string
-        WELD_ELECTRODES: Dict[str, WeldElectrode] = {
-            "e60xx": WeldElectrode(Fexx=60.0 * si.ksi),
-            "e70xx": WeldElectrode(Fexx=70.0 * si.ksi),
-            "e80xx": WeldElectrode(Fexx=80.0 * si.ksi),
-        }
+            self.length *= si.inch
+        
+        # Validate and convert electrode string to strength value
         if isinstance(self.electrode, str):
-            electrode_key = self.electrode.lower()  # Make it case-insensitive
-            
-            # Look up the string in our catalog
-            electrode_object = WELD_ELECTRODES.get(electrode_key)
-            
-            # If the key is invalid, raise a helpful error
-            if electrode_object is None:
+            electrode_key = self.electrode.lower()
+            weld_electrodes = {
+                "e60xx": 60.0 * si.ksi,
+                "e70xx": 70.0 * si.ksi,
+                "e80xx": 80.0 * si.ksi,
+            }
+            if electrode_key not in weld_electrodes:
                 raise ValueError(
-                    f"Invalid weld electrode string: '{self.electrode}'. "
-                    f"Valid options are: {list(WELD_ELECTRODES.keys())}"
+                    f"Invalid weld electrode: '{self.electrode}'. Valid options: {list(weld_electrodes.keys())}"
                 )
-            self.electrode = electrode_object
+            self.electrode = weld_electrodes[electrode_key]
 
 @dataclass(frozen=True)
 class PlateDimensions:
@@ -249,6 +240,9 @@ class DesignLoads:
     Vu: si.kip = 0 * si.kip
     Aub: si.kip = 0 * si.kip
     out_of_plane_force: si.kip = 0 * si.kip
+    Peq: si.kip = 0 * si.kip  # Equivalent force from moments
+    Rw: si.kip = 0 * si.kip  # Resultant weld force
+
 
 @dataclass(frozen=True)
 class GlobalLoads:
@@ -262,8 +256,8 @@ class GlobalLoads:
     my: float = 0.0
     mz: float = 0.0
     direct_load : float = 0.0
-    fx_eq: float = 0.0
-    r_w: float = 0.0
+    fxeq: float = 0.0
+    rw: float = 0.0
 
     def __post_init__(self):
         object.__setattr__(self, 'fx', self.fx * si.kip if isinstance(self.fx, (int, float)) else self.fx)
@@ -273,8 +267,8 @@ class GlobalLoads:
         object.__setattr__(self, 'my', self.my * si.kip if isinstance(self.my, (int, float)) else self.my)
         object.__setattr__(self, 'mz', self.mz * si.kip if isinstance(self.mz, (int, float)) else self.mz)
         object.__setattr__(self, 'direct_load', self.direct_load * si.kip if isinstance(self.direct_load, (int, float)) else self.direct_load)
-        object.__setattr__(self, 'fx_eq', self.fx_eq * si.kip if isinstance(self.fx_eq, (int, float)) else self.fx_eq)
-        object.__setattr__(self, 'r_w', self.r_w * si.kip if isinstance(self.r_w, (int, float)) else self.r_w)
+        object.__setattr__(self, 'fxeq', self.fxeq * si.kip if isinstance(self.fxeq, (int, float)) else self.fxeq)
+        object.__setattr__(self, 'rw', self.rw * si.kip if isinstance(self.rw, (int, float)) else self.rw)
 
 @dataclass(frozen=True)
 class BeamColumnTransferredForce:
@@ -477,6 +471,7 @@ class Connection:
         on connection topology if roles are not provided.
         """
         # Step 1: Define transformation rules for each role
+
         transformation_rules = {
             'BEAM':       {'Pu': self.global_loads.fx, 'Vu': self.global_loads.fy},
             'COLUMN':     {'Pu': self.global_loads.fy, 'Vu': self.global_loads.fx},
@@ -484,16 +479,22 @@ class Connection:
             'END_PLATE':  {'Pu': self.global_loads.fy, 'Vu': self.global_loads.fx},
             'SHEAR_PLATE':{'Pu': self.global_loads.fx, 'Vu': self.global_loads.fy},
             'BRACE':   {'Pu': self.global_loads.direct_load, 'Vu': 0 * si.kip},
-            'GUSSET_PLATE': {'Pu': self.global_loads.fx + self.global_loads.direct_load, 'Vu': 0 * si.kip},
+            ('GUSSET_PLATE','along_length'): {'Pu': self.global_loads.fx + self.global_loads.direct_load, 'Vu': self.global_loads.fy, 'Peq': self.global_loads.fxeq, 'Rw': self.global_loads.rw},
+            ('BEAM', 'flange_top'): {'Pu': self.global_loads.fx, 'Vu': self.global_loads.rw if self.global_loads.rw else self.global_loads.fy},
         }
 
         # Step 2: Assign loads based on explicit roles if they exist
         # Check member_a
-        if self.member_a.role in transformation_rules:
-            self.member_a.loads = DesignLoads(**transformation_rules[self.member_a.role])
+        print(self.member_a.role,self.member_a.component.value)
+        print((self.member_a.role,self.member_a.component.value) in transformation_rules)
+        print(self.member_b.role,self.member_b.component.value)
+        print((self.member_b.role,self.member_b.component.value) in transformation_rules)
+        
+        if (self.member_a.role,self.member_a.component.value) in transformation_rules:
+            self.member_a.loads = DesignLoads(**transformation_rules[(self.member_a.role,self.member_a.component.value)])
         # Check member_b
-        if self.member_b.role in transformation_rules:
-            self.member_b.loads = DesignLoads(**transformation_rules[self.member_b.role])
+        if (self.member_b.role,self.member_b.component.value) in transformation_rules:
+            self.member_b.loads = DesignLoads(**transformation_rules[(self.member_b.role,self.member_b.component.value)])
 
         # If both roles were provided and handled, the job is done.
         if self.member_a.role and self.member_b.role:

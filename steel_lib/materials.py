@@ -1,9 +1,21 @@
+from dataclasses import dataclass
 from typing import Dict
 import forallpeople as si
-from .data_models import Material, BoltGrade, WeldElectrode
+
+@dataclass(frozen=True)
+class BoltGrade:
+    """Represents the nominal strength properties of a bolt material."""
+    name: str      # e.g., "A325"
+    Fnt: si.ksi  # Nominal tensile stress
+    Fnv: si.ksi  # Nominal shear stress
 
 si.environment('structural', top_level=False)
-
+@dataclass(frozen=True)
+class Material:
+    """Represents the engineering properties of a steel material."""
+    Fy: si.ksi
+    Fu: si.ksi
+    E: si.ksi
 MATERIALS: Dict[str, Material] = {
     "a36": Material(Fy=36.0 * si.ksi, Fu=58.0 * si.ksi, E=29000.0 * si.ksi),
     "a572_gr50": Material(Fy=50.0 * si.ksi, Fu=65.0 * si.ksi, E=29000.0 * si.ksi),
@@ -17,8 +29,8 @@ BOLT_GRADES: Dict[str, BoltGrade] = {
     "a490_x": BoltGrade(name="A490-X", Fnt=113.0 * si.ksi, Fnv=84.0 * si.ksi), # Threads excluded
 }
 
-WELD_ELECTRODES: Dict[str, WeldElectrode] = {
-    "e60xx": WeldElectrode(Fexx=60.0 * si.ksi),
-    "e70xx": WeldElectrode(Fexx=70.0 * si.ksi),
-    "e80xx": WeldElectrode(Fexx=80.0 * si.ksi),
+WELD_ELECTRODES: Dict[str, si.Physical] = {
+    "e60xx": 60.0 * si.ksi,
+    "e70xx": 70.0 * si.ksi,
+    "e80xx": 80.0 * si.ksi,
 }

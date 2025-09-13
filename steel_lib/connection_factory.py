@@ -6,7 +6,7 @@ from steel_lib.data_models import (
     ConnectionComponent,
     BoltConfiguration,
     WeldConfiguration,
-    Connection, get_component_from_string
+    Connection, get_component_from_string,Plate
 )
 from .si_units import si
 
@@ -72,7 +72,14 @@ class ConnectionFactory:
         Creates a connection (bolted or welded), explicitly defining the two members and their
         connected components.
         """
-
+        if isinstance(connection_configuration, WeldConfiguration):
+            if connection_configuration.length:
+                connection_configuration.length = connection_configuration.length
+            else:
+                if isinstance(member_a, Plate):
+                    connection_configuration.length = member_a.length
+                elif isinstance(member_b, Plate):
+                    connection_configuration.length = member_b.length
         return ConnectionFactory._create_connection(
             member_a=member_a,
             member_b=member_b,

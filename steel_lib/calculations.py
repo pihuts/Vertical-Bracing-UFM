@@ -18,6 +18,7 @@ from .debugging import DebugLogger
 from abc import ABC, abstractmethod
 from handcalcs.decorator import handcalc
 from functools import lru_cache
+from numpy import sqrt,sin
 # Define a type hint for numbers for clarity
 Numeric = Union[int, float]
 jupyter_format = "long"
@@ -223,7 +224,7 @@ def round_up_to_interval(number: Numeric, interval: Numeric) -> Numeric:
     return math.ceil(number / interval) * interval
 
 @lru_cache(maxsize=512)
-def check_dcr(capacity: float, demand: float, limit_state_name: str, debug: bool = False) -> float:
+def check_dcr(capacity: float, demand: float, limit_state_name: str) -> float:
     """
     Calculates the demand-to-capacity ratio (DCR) and provides detailed logging.
 
@@ -236,18 +237,12 @@ def check_dcr(capacity: float, demand: float, limit_state_name: str, debug: bool
     Returns:
         float: The demand-to-capacity ratio.
     """
-    logger = DebugLogger(f"DCR Check: {limit_state_name}", debug)
-    logger.add_input("Demand", demand)
-    logger.add_input("Capacity", capacity)
 
     if capacity == 0:
         dcr = float('inf')
-        logger.add_output("DCR", "Infinity (capacity is zero)")
+
     else:
         dcr = demand / capacity
-        logger.add_output("DCR (Demand / Capacity)", dcr)
-    
-    logger.display()
     dcr = result(demand=demand, capacity=capacity, dcr=dcr, name=limit_state_name)
     return dcr
 
@@ -1633,74 +1628,55 @@ class WebLocalCrippingCalculator:
         """Calculates the demand-to-capacity ratio."""
         capacity = self.calculate_capacity(**kwargs)
         return check_dcr(capacity, abs(demand_force), "Web Local Crippling", **kwargs)
-class ShearYieldingCalculator:
+class ShearYieldingCalculator(LimitState):
     """
     Calculates the shear yielding capacity of a member based on AISC Specification J3.2.
     This class is designed to handle both L and U patterns for block shear calculations.
     """
 
-    def __init__(self, endpoint: "ConnectionEndpoint", connection: Connection,loads : DesignLoads):
-        self.endpoint = endpoint
+    def __init__(self, endpoint: ConnectionEndpoint):
+        if endpoint.component not in [ConnectionComponent.FLANGE_TOP]:
+            raise ValueError("ShearYieldingCalculator only supports FLANGE_TOP component.")
+        self.loads = endpoint.loads
         self.member = endpoint.member
-        self.loads = loads
-        self.connection = connection # Keep the full connection for context
-        self.config: Union[BoltConfiguration, WeldConfiguration] = connection.configuration
-        self.connection_type = connection.connection_type
- 
-        # Extract common properties
-        self.Fy = self.member.Fy
-        self.Fu = self.member.Fu
-        self.thickness = self._get_member_thickness()
-
-
-    def _get_member_thickness(self) -> float:
-        """Determines thickness from various member types and ensures it has units."""
-        if hasattr(self.member, "t"):
-            t_val = self.member.t
-            if hasattr(t_val, 'units'):
-                return t_val
-            if isinstance(t_val, (int, float)):
-                return t_val
-            return t_val
-        elif hasattr(self.member, "tw"):
-            tw_val = self.member.tw
-            if isinstance(tw_val, (int, float)):
-                return tw_val
-            return tw_val
-        raise AttributeError("Member does not have a recognizable thickness attribute.")
-
-    def calculate_capacity(self, resistance_factor: float = 1.0, debug: bool = False) -> float:
-        """
-        Calculates the design shear yielding strength (phiRn).
-        """
-        logger = DebugLogger(f"Shear Yielding ({self.endpoint.component.name})", debug)
+        self.latex_config = LatexConfig(main_title="Shear Yielding")
+        self.component = endpoint.component
         
-        gross_area = get_applicable_gross_area(self.endpoint, self.connection)
-        loading_condition = getattr(self.member, "loading_condition", 1)
-        
-        logger.add_input("Member Type", getattr(self.member, "Type", "N/A"))
-        logger.add_input("Connection Type", self.connection_type)
-        logger.add_input("Yield Strength (Fy)", self.Fy)
-        logger.add_input("Ultimate Strength (Fu)", self.Fu)
-        logger.add_input("Member Thickness (t)", self.thickness)
-        logger.add_input(f"Applicable Gross Area (Ag) for {self.endpoint.component.name}", gross_area)
-        logger.add_input("Loading Condition (Informational)", loading_condition)
-        logger.add_input("Resistance Factor (phi)", resistance_factor)
+        #connection properties 
+        connection: Connection = endpoint.connection_configuration
 
-        # Per AISC J4.2(a), the nominal strength for shear yielding is 0.6 * Fy * Ag
-        nominal_capacity = 0.6 * self.Fy * gross_area
-        design_capacity = resistance_factor * nominal_capacity
 
-        logger.add_calculation("Nominal Capacity (0.6 * Fy * Ag)", nominal_capacity)
-        logger.add_output("Design Capacity (phiRn)", design_capacity)
-        logger.display()
+        if isinstance(connection, WeldConfiguration):
+            weld_size = connection.weld_size
+            weld_length = connection.length
+            self.weld_length = weld_length - 2*min(weld_size,0.3125*si.inch) 
+                    # Demand 
+            if endpoint.component == ConnectionComponent.FLANGE_TOP:
+                self.demand = abs(self.loads.Vu)
+    def _calculate_capacity(self,detailed: bool = False) -> float:
+        @optional_reporting_handcalc(config_object=self.latex_config ,key="Area Top Flange",jupyter_display=False,override=jupyter_format,precision=3,detailed=detailed)
+        def area_flange_top_weld(L_weld, t_f) -> float:
+            A_n = L_weld * t_f * 2
+            return A_n
+        @optional_reporting_handcalc(config_object=self.latex_config ,key="Shear Yielding Strength",jupyter_display=False,override=jupyter_format,precision=3,detailed=detailed)
+        def calculate_strength_yield(A_g,F_y,phi) -> float:
+            V_n = 0.6 * F_y * A_g
+            V_u = V_n * phi
+            return V_u
+        @optional_reporting_handcalc(config_object=self.latex_config ,key="Shear Rupture Strength",jupyter_display=False,override=jupyter_format,precision=3,detailed=detailed)
+        def calculate_strength_rupture(A_n,F_u,phi) -> float:
+            V_n = 0.6 * F_u * A_n
+            V_u = V_n * phi
+            return V_u
+        if self.component == ConnectionComponent.FLANGE_TOP:
+            A_n = area_flange_top_weld(L_weld=self.weld_length,t_f=self.member.tf)
+            V_u = calculate_strength_rupture(A_n=A_n,F_u=self.member.material.Fu,phi=0.75)
+            return V_u
 
-        return design_capacity
-
-    def check_dcr(self, **kwargs) -> float:
+    def check_dcr(self, detailed: bool = False) -> float:
         """Calculates the demand-to-capacity ratio."""
-        capacity = self.calculate_capacity(**kwargs)
-        return check_dcr(capacity, abs(self.loads.Vu), f"Shear Yielding ({self.endpoint.component.name})", **kwargs)
+        capacity = self._calculate_capacity(detailed=detailed)
+        return check_dcr(capacity, abs(self.demand), f"Shear Yielding"),self.latex_config
 
 
 class PryingActionCalculator:
@@ -1983,49 +1959,88 @@ class PryingActionCalculator:
         
         return check_dcr(design_capacity, demand_per_bolt, "Prying Action", debug=debug)
 
-class WeldCalculator:
-    def __init__(self,  connection: Connection,loads: DesignLoads):
+class WeldCalculator(LimitState):
+    def __init__(self, endpoint: ConnectionEndpoint):
         """
-        Initializes the WeldCalculator with the connection configuration.
+        Initializes the WeldCalculator with the connection endpoint.
+        Performs input validation and extracts necessary properties.
         """
-        self.shear =  loads.Vu
-        self.axial = loads.Pu
-        self.connection = connection
-        self.config: WeldConfiguration = connection.configuration
-        self.weld_size = self.config.weld_size
-        self.weld_length = self.config.length
-        self.fv = loads.Vu/self.weld_length
-        self.fa = loads.Pu/self.weld_length
-        self.f_avg = 0.5 * ((self.fa**2+self.fv**2)**0.5 + (self.fv**2+self.fa**2)**0.5)
-        self.f_peak = (self.fa**2 + self.fv**2)**0.5
-        self.fu_weld = max(self.f_avg *1.25 ,self.f_peak)
-        self.angle = math.atan(self.fa/ self.fv) if self.fv != 0 else 0
-        self.strength_increase = 1+0.5*math.sin(self.angle)**1.5
-    def calculate_min_thickness(self, debug: bool = False):
+        # Input validation
+        if not hasattr(endpoint, 'loads') or endpoint.loads is None:
+            raise ValueError("Endpoint must have valid loads.")
+        if not hasattr(endpoint, 'connection_configuration') or not isinstance(endpoint.connection_configuration, WeldConfiguration):
+            raise ValueError("Endpoint must have a valid WeldConfiguration.")
+        if not hasattr(endpoint, 'member') or endpoint.member is None:
+            raise ValueError("Endpoint must have a valid member.")
+
+        # Extract and validate loads
+        self.loads = endpoint.loads
+        self.shear = self.loads.Vu  # Shear force on the weld
+        self.axial = self.loads.Pu  # Axial force on the weld
+        self.P_eq = self.loads.Peq  # Equivalent axial force
+        self.R_w = self.loads.Rw  # Resultant weld force
+
+        # Extract and validate connection properties
+        self.connection: WeldConfiguration = endpoint.connection_configuration
+        self.weld_size = self.connection.weld_size  # Size of the weld
+        self.weld_length = self.connection.length  # Length of the weld
+        if self.weld_length is None or self.weld_length <= 0:
+            raise ValueError("Weld length must be a positive value.")
+        self.f_exx = self.connection.electrode  # Effective weld strength
+
+        # Extract and validate member properties
+        self.member = endpoint.member
+        if not hasattr(self.member, 'material') or self.member.material is None:
+            raise ValueError("Member must have a valid material.")
+        self.F_ygp = self.member.material.Fy  # Yield strength of the member
+        self.F_ugp = self.member.material.Fu  # Ultimate strength of the member
+        if not hasattr(self.member, 't') or self.member.t is None:
+            raise ValueError("Member must have a valid thickness 't'.")
+        self.t_gp = self.member.t  # Thickness of the member
+
+        # Configuration for LaTeX reporting
+        self.latex_config = LatexConfig(main_title="Weld Strength")
+
+    def _calculate_capacity(self,detailed: bool = False) -> float:
         """
-        Calculates the minimum thickness of the weld based on the shear and axial forces.
-        Returns the minimum thickness in inches.
+        Performs intermediate calculations for weld design.
         """
-        logger = DebugLogger("Weld Minimum Thickness Calculation", debug)
-        try:
-            logger.add_input("Shear Force (Vu)", self.shear)
-            logger.add_input("Axial Force (Pu)", self.axial)
-            logger.add_input("Weld Size", self.weld_size)
-            logger.add_input("Weld Length", self.weld_length)
-            logger.add_input("Shear Stress (fv)", self.fv)
-            logger.add_input("Axial Stress (fa)", self.fa)
-            logger.add_input("Average Stress (f_avg)", self.f_avg)
-            logger.add_input("Peak Stress (f_peak)", self.f_peak)
-            logger.add_input("Angle (radians)", self.angle)
-            logger.add_input("Ultimate Weld Strength (fu_weld)", self.fu_weld)
-            logger.add_input("Strength Increase Factor", self.strength_increase)
-            min_thickness = self.fu_weld / (2 * (1.392 * si.kip / si.inch) * self.strength_increase)
-            logger.add_input( "minimum thickness", min_thickness)
-            return min_thickness
-        finally:
-            logger.display()
+        # This method can be expanded for additional calculations if needed.
+        @optional_reporting_handcalc(config_object=self.latex_config ,key="Controlling Angle",jupyter_display=False,override="params",precision=3,detailed=detailed)
+        def _controlling_angle(V_u,P_eq,H_u):
+
+            theta = math.atan((V_u+P_eq) / H_u) 
+            return theta
+        @optional_reporting_handcalc(config_object=self.latex_config ,key="Weld Limit",jupyter_display=False,override="params",precision=3,detailed=detailed)
+        def _calculation_weld_limit( F_ygp,F_ugp,t_gp,F_uw,W_size):
+            k_factor_ty = 0.9
+            k_factor_tr = 0.75
+            k_factor_weld = 0.75
+            W_limit = min(max(F_ygp,50*si.ksi)*t_gp *k_factor_ty, max(F_ugp,65*si.ksi)*t_gp *k_factor_tr) / (k_factor_weld*2*0.60*F_uw*1.5*(0.5*sqrt(2)))
+            W_weld = min(W_size,W_limit)
+            return W_limit,W_weld
+        @optional_reporting_handcalc(config_object=self.latex_config ,key="Weld Strength",jupyter_display=False,override="params",precision=3,detailed=detailed)
+        def _calculation_weld_strength( L_b,W_size,W_limit,theta_w,F_exx,phi):
+            L_weld = L_b - 2*min(W_size,0.3125*si.inch) 
+
+            W_weld = min(W_size,W_limit)
+
+            R_n = 0.6 * F_exx*sqrt(2)/2 *W_weld * 2 * L_weld * ( 1 + 0.5 * sin(theta_w)**1.5)
+
+            R_u = phi * R_n
+            return R_u
+        
+        theta_w = _controlling_angle(V_u = self.loads.Vu,P_eq=self.loads.Peq,H_u=self.loads.Pu)
+        W_limit,W_weld = _calculation_weld_limit( F_ygp=self.F_ygp,F_ugp=self.F_ugp,t_gp=self.t_gp,F_uw=self.f_exx,W_size=self.weld_size)
+        R_u = _calculation_weld_strength( L_b=self.weld_length,W_size=W_weld,W_limit=W_limit,theta_w=theta_w,F_exx=self.f_exx,phi=0.75)
+        return R_u
+    def check_dcr(self, detailed: bool = False) -> float:
+        """Calculates the demand-to-capacity ratio."""
+        capacity = self._calculate_capacity(detailed=detailed)
+
+        return check_dcr(capacity=capacity, demand=abs(self.loads.Rw), limit_state_name=f"Weld"),self.latex_config
 
 
 # aisc_360_14th = [BoltShearCalculator, BoltTensileCalculator,TensileYieldingCalculator,TensileRuptureCalculator,BlockShearCalculator]
 # aisc_360_14th = [BoltTensileCalculator]
-aisc_360_14th = [BoltShearCalculator]
+aisc_360_14th = [ShearYieldingCalculator,WeldCalculator]

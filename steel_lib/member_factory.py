@@ -2,7 +2,7 @@ from typing import Any, Type, Literal, Optional
 from .data_models import Plate, GeometricProperties, Material
 from .si_units import si
 from steelpy import aisc
-from steel_lib.materials import MATERIALS, BOLT_GRADES, WELD_ELECTRODES
+from steel_lib.materials import MATERIALS, BOLT_GRADES
 import math
 class MemberFactory:
     """
@@ -87,9 +87,7 @@ class MemberFactory:
         MemberFactory._enrich_member_with_units(section)
 
         # 3. Add the necessary material and type properties
-        section.add_property("Fy", material.Fy)
-        section.add_property("Fu", material.Fu)
-        section.add_property("E", material.E)
+        section.add_property("material", material)
         section.add_property("Type", shape_type)
         section.add_property("Role", role)
         section.add_property("angle", angle)
