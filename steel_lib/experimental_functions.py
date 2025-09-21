@@ -5,6 +5,7 @@ from forallpeople import Physical
 from numpy import atan, sin , cos, tan
 import numpy as np  
 from typing import Literal
+from math import sqrt
 def optional_reporting_handcalc(config_object, *, key: str, detailed: Literal["calculation",'latex','test'] = False, **handcalc_kwargs):
     """
     A single, powerful conditional decorator that combines the functionality
@@ -52,7 +53,7 @@ def optional_reporting_handcalc(config_object, *, key: str, detailed: Literal["c
             return handcalc(jupyter_display=True,precision=3,override='long')(func)
     return decorator
 
-detailed = 'test'
+detailed = 'calculation'
 particle_dtype = np.dtype([
     ('id', np.int32),        # A 32-bit integer for the particle's unique ID
     ('velocity', np.float64),  # A 64-bit float for the particle's velocity
@@ -92,7 +93,7 @@ def calculation_theta(P_u,V_u):
 # dtype_bearing = np.dtype([('spacing', np.float64), ("edge_distance_horizontal", np.float64),("edge_distance_vertical", np.float64),("number_of_bolts",np.int32)])
 
 
-
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
 def bolt_bearing(F_u, d_bolt, t, P_u, V_u, S_r, N_r, S_c, N_c, L_ev, L_eh, dv, dh, phi, c):
     """
     Calculates the bolt bearing strength for single or multiple columns of bolts.
@@ -161,65 +162,286 @@ def calculation_area(l,l_net,t):
 def calculation_shear_component(A_g,A_net,F_y,F_u):
     V_yield = 0.6 * F_y * A_g 
     V_rupture = 0.6 * F_u * A_net
-    V_u = min(V_yield,V_rupture)
-    return V_u
+    V_n = min(V_yield,V_rupture)
+    return V_n
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
 def calculation_tensile_component(A_g,A_net,F_y,F_u,U_bs=1.0):    
-    P_u = F_u * A_net * U_bs
-    return P_u
+    P_n = F_u * A_net * U_bs
+    return P_n
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-def calculation_block_shear(V_n,P_n,phi):
-    R_u = phi * (V_n + P_n)
-    return R_u  
-def block_shear(P_u, V_u, F_y, F_u, t, N_r, S_r, N_c, S_c, L_ev, L_eh, d_v, d_h, phi):
+def calculation_block_shear(V_n,P_n,phi,n_members=1):
+    R_u = phi * (V_n + P_n) * n_members
+    return R_u
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed) 
+def calculate_path1_pu(N_r, S_r, N_c, S_c, L_ev, L_eh, dv_hole, dh_hole, t, F_y, F_u, phi,n_members=1):
+    l_path1, l_net_path1 = calculation_length_l_path_1(N_r, S_r, L_ev, dv_hole)
+    A_gt_path1, A_nt_path1 = calculation_area(l_path1, l_net_path1, t)
+    P_n1 = calculation_tensile_component(A_gt_path1, A_nt_path1, F_y, F_u)
+    l_path2, l_net_path2 = calculation_length_l_path_2(N_c, S_c, t, L_eh, dh_hole)
+    A_gv_path1, A_nv_path1 = calculation_area(l_path2, l_net_path2, t)
+    V_n1 = calculation_shear_component(A_gv_path1, A_nv_path1, F_y, F_u)
+    R_n_path1 = calculation_block_shear(V_n1, P_n1, phi,n_members=n_members)
+    return R_n_path1
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculate_path2_pu(N_r, S_r, N_c, S_c, L_ev, L_eh, dv_hole, dh_hole, t, F_y, F_u, phi,n_members=1):
+    u_path1, u_net_path1 = calculation_length_u_path_1(N_r, S_r, L_ev, dv_hole)
+    A_gt_path2, A_nt_path2 = calculation_area(u_path1, u_net_path1, t)
+    P_n2 = calculation_tensile_component(A_gt_path2, A_nt_path2, F_y, F_u)
+    u_path2, u_net_path2 = calculation_length_u_path_2(N_c, S_c, t, L_eh, dh_hole)
+    A_gv_path2, A_nv_path2 = calculation_area(u_path2, u_net_path2, t)
+    V_n2 = calculation_shear_component(A_gv_path2, A_nv_path2, F_y, F_u)
+    R_n_path2 = calculation_block_shear(V_n2, P_n2, phi,n_members=n_members)
+    return R_n_path2
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculate_path1_vu(N_r, S_r, N_c, S_c, L_ev, L_eh, dv_hole, dh_hole, t, F_y, F_u, phi,coped=False,n_members=1):
+    l_path1, l_net_path1 = calculation_length_l_path_1(N_r, S_r, L_ev, dv_hole)
+    A_gv_path1, A_nv_path1 = calculation_area(l_path1, l_net_path1, t)
+    V_n1 = calculation_shear_component(A_gv_path1, A_nv_path1, F_y, F_u)
+    l_path2, l_net_path2 = calculation_length_l_path_2(N_c, S_c, t, L_eh, dh_hole)
+    A_gt_path1, A_nt_path1 = calculation_area(l_path2, l_net_path2, t)
+    U_bs = 0.5 if coped else 1.0
+    P_n1 = calculation_tensile_component(A_gt_path1, A_nt_path1, F_y, F_u, U_bs=U_bs)
+    R_n_path1 = calculation_block_shear(V_n1, P_n1, phi,n_members=n_members)
+    return R_n_path1
+
+# def calculate_path2_vu(N_r, S_r, N_c, S_c, L_ev, L_eh, dv_hole, dh_hole, t, F_y, F_u, phi):
+#     u_path1, u_net_path1 = calculation_length_u_path_1(N_r, S_r, L_ev, dv_hole)
+#     A_gv_path2, A_nv_path2 = calculation_area(u_path1, u_net_path1, t)
+#     V_n2 = calculation_shear_component(A_gv_path2, A_nv_path2, F_y, F_u)
+#     u_path2, u_net_path2 = calculation_length_u_path_2(N_c, S_c, t, L_eh, dh_hole)
+#     A_gt_path2, A_nt_path2 = calculation_area(u_path2, u_net_path2, t)
+#     P_n2 = calculation_tensile_component(A_gt_path2, A_nt_path2, F_y, F_u, U_bs=0.5)
+#     R_n_path2 = calculation_block_shear(V_n2, P_n2, phi)
+#     return R_n_path2
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def block_shear(P_u, V_u, F_y, F_u, t, N_r, S_r, N_c, S_c, L_ev, L_eh, d_v, d_h, phi,coped,n_members=1):
     """ 
     Calculates the block shear strength for a given set of parameters by evaluating two paths.
     The original engineering logic and helper functions are preserved.
     """
     dv_hole = d_v + 0.0625
     dh_hole = d_h + 0.0625
+    R_n_path1 = np.inf
+    R_n_path2 = np.inf
     if P_u:
-        # --- Path 1: Shear on longitudinal plane, tension on transverse plane ---
 
-        # l_path1, l_net_path1 = calculation_length_l_path_1(N_r, S_r, L_ev, dv_hole)
-        # A_gt_path1, A_nt_path1 = calculation_area(l_path1, l_net_path1, t)
-        # P_n1 = calculation_tensile_component(A_gt_path1, A_nt_path1, F_y, F_u)
-
-        # l_path2, l_net_path2 = calculation_length_l_path_2(N_c, S_c, t, L_eh, dh_hole)
-        # A_gv_path1, A_nv_path1 = calculation_area(l_path2, l_net_path2, t)
-        # V_n1 = calculation_shear_component(A_gv_path1, A_nv_path1, F_y, F_u)
-        # # Note: calculation_area expects two length values, but calculation_length_l_path_1 only returns one.
-        # # Assuming the gross length is not needed or can be derived if necessary. Using l_net_path1 for both.
-  
-        # R_n_path1 = calculation_block_shear(V_n1, P_n1, phi)
-
-        # --- Path 2: Shear on transverse planes, tension on longitudinal plane ---
-        # u_path1, u_net_path1 = calculation_length_u_path_1(N_r, S_r, L_ev, dv_hole)
-        # A_gt_path2, A_nt_path2 = calculation_area(u_path1, u_net_path1, t)
-        # P_n2 = calculation_tensile_component(A_gt_path2, A_nt_path2, F_y, F_u)
-        
-        # u_path2, u_net_path2 = calculation_length_u_path_2(N_c, S_c, t, L_eh, dh_hole)
-        # A_gv_path2, A_nv_path2 = calculation_area(u_path2, u_net_path2, t)
-        # V_n2 = calculation_shear_component(A_gv_path2, A_nv_path2, F_y, F_u)
-
-        # R_n_path2 = calculation_block_shear(V_n2, P_n2, phi)
-        pihuts = 1
-
-        # # The final block shear strength is the minimum of the two paths.
-        # R_n = min(R_n_path1, R_n_path2)
-    if V_u:
-        # --- Path 1: Shear on longitudinal plane, tension on transverse plane ---
-        l_path1,l_net_path1 = calculation_length_l_path_1(N_r, S_r, L_ev, dv_hole)
+        l_path1, l_net_path1 = calculation_length_l_path_1(N_r, S_r, L_ev, dv_hole)
+        A_gt_path1, A_nt_path1 = calculation_area(l_path1, l_net_path1, t)
+        P_n1 = calculation_tensile_component(A_gt_path1, A_nt_path1, F_y, F_u)
         l_path2, l_net_path2 = calculation_length_l_path_2(N_c, S_c, t, L_eh, dh_hole)
-
-        # Note: calculation_area expects two length values, but calculation_length_l_path_1 only returns one.
-        # Assuming the gross length is not needed or can be derived if necessary. Using l_net_path1 for both.
-        A_gv_path1, A_nv_path1 = calculation_area(l_path1, l_net_path1, t)
-        A_gt_path1, A_nt_path1 = calculation_area(l_path2, l_net_path2, t)
-
+        A_gv_path1, A_nv_path1 = calculation_area(l_path2, l_net_path2, t)
         V_n1 = calculation_shear_component(A_gv_path1, A_nv_path1, F_y, F_u)
-        P_n1 = calculation_tensile_component(A_gt_path1, A_nt_path1, F_y, F_u,U_bs = 0.5)
-        R_n_path1 = calculation_block_shear(V_n1, P_n1, phi)
+        R_n_path1 = calculation_block_shear(V_n1, P_n1, phi,n_members=n_members)
+        
+        u_path1, u_net_path1 = calculation_length_u_path_1(N_r, S_r, L_ev, dv_hole)
+        A_gt_path2, A_nt_path2 = calculation_area(u_path1, u_net_path1, t)
+        P_n2 = calculation_tensile_component(A_gt_path2, A_nt_path2, F_y, F_u)
+        u_path2, u_net_path2 = calculation_length_u_path_2(N_c, S_c, t, L_eh, dh_hole)
+        A_gv_path2, A_nv_path2 = calculation_area(u_path2, u_net_path2, t)
+        V_n2 = calculation_shear_component(A_gv_path2, A_nv_path2, F_y, F_u)
+        R_n_path2 = calculation_block_shear(V_n2, P_n2, phi,n_members=n_members)
+            
+    if V_u:
+
+        l_path1, l_net_path1 = calculation_length_l_path_1(N_r, S_r, L_ev, dv_hole)
+        A_gv_path1, A_nv_path1 = calculation_area(l_path1, l_net_path1, t)
+        V_n1 = calculation_shear_component(A_gv_path1, A_nv_path1, F_y, F_u)
+        l_path2, l_net_path2 = calculation_length_l_path_2(N_c, S_c, t, L_eh, dh_hole)
+        A_gt_path1, A_nt_path1 = calculation_area(l_path2, l_net_path2, t)
+        U_bs = 0.5 if coped else 1.0
+        P_n1 = calculation_tensile_component(A_gt_path1, A_nt_path1, F_y, F_u, U_bs=U_bs)
+        R_n_path1 = calculation_block_shear(V_n1, P_n1, phi,n_members=n_members)
+    return min(R_n_path1,R_n_path2)
 
 
-    return 123
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_connection_length_bolted(N_r,S_r,L_ev):
+    l = (N_r-1) * S_r + L_ev * 2
+    return l
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_area_gross(l,t):
+    A_g = l*t
+    return A_g
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_area_holes(N_r,d_b,t):
+    d_holes = d_b + 0.0625 * 2
+    A_holes = N_r * d_holes * t
+    return A_holes
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_area_net_plates(A_g,A_holes):
+    A_net = A_g - A_holes
+    return A_net
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_shear_yielding(A_g,F_y,phi):
+    V_n_yielding = 0.6 * A_g * F_y
+    V_u_yielding = phi * V_n_yielding
+    return V_u_yielding
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_shear_rupture(A_net,F_u,phi):
+    V_n_rupture = 0.6 * A_net * F_u
+    V_u_rupture = V_n_rupture * phi
+    return V_u_rupture
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_shear_strength(V_u_yielding,V_u_rupture,n_members=1,coped=0):
+    if coped == 2: V_u = min(V_u_yielding,V_u_rupture) * n_members
+    else: V_u = V_u_yielding * n_members
+    return V_u
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def shear_yielding_rupture(N_r, S_r, L_ev, t, d_b, F_y, F_u, phi,n_members=1,coped = 0):
+    def _calculate_shear_yielding_rupture_bolted(N_r, S_r, L_ev, t, d_b, F_y, F_u, phi):
+        l = calculation_connection_length_bolted(N_r, S_r, L_ev)
+        A_g = calculation_area_gross(l, t)
+        A_holes = calculation_area_holes(N_r, d_b,t)
+        A_net = calculation_area_net_plates(A_g, A_holes)
+        V_u_yielding = calculation_shear_yielding(A_g, F_y, 1)
+        V_u_rupture = calculation_shear_rupture(A_net, F_u, phi)
+        V_u = calculation_shear_strength(V_u_yielding, V_u_rupture,n_members=n_members,coped=coped)
+        return V_u
+    return _calculate_shear_yielding_rupture_bolted(N_r, S_r, L_ev, t, d_b, F_y, F_u, phi)
+
+
+
+
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_ubs_w_section(b_f,t_f,d,t_w,l):
+    A_flange = (b_f/2 * t_f)
+    M_arm_flange =  (b_f/4)
+    A_web = (d - 2*t_f)* t_w/2
+    M_arm_web = t_w/4
+    x_g = ((A_flange * M_arm_flange * 2 )+ (A_web * M_arm_web)) / (A_flange * 2 + A_web)
+    U_bs_1 = 1 - x_g/l
+    return U_bs_1
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_ubs_w_section_coped(A_g,t_f,d,t_w,n_flange,d_top,d_bot,U_bs_1 = None):
+    l_conn = d - d_top - d_bot - t_f * n_flange
+    A_conn = l_conn * t_w
+    U_bs_limit = A_conn /A_g
+    if U_bs_1: U_bs = max(U_bs_limit,U_bs_1)
+    else: U_bs = U_bs_limit
+    return U_bs
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_connection_length_bolted(N_r,S_r,L_ev):
+    l = (N_r-1) * S_r + L_ev * 2
+    return l
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_area_gross(l,t,coped = 2):
+    if coped == 2:A_g = l*t
+    if coped = 
+    return A_g
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_area_holes(N_r,d_b,t):
+    d_holes = d_b + 0.0625 * 2
+    A_holes = N_r * d_holes * t
+    return A_holes
+
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_area_net_beam(A_g,A_holes,d,d_top,d_bot,t_f,t_w,n_flange,U_bs = 1,coped = 0):
+    A_net = (A_g - A_holes) * U_bs
+    if coped ==  1:l_w = d - d_top - d_bot - t_f * n_flange;A_w = l_w * t_w;A_w_net = A_w - A_holes;A_e = min(A_net,A_w_net)
+    elif coped == 0: A_e = A_net
+    return A_e
+
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_area_net_plates(A_g,A_holes,U_bs = 1):
+    A_e = (A_g - A_holes) * U_bs
+    return A_e
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_tensile_yielding(A_g,F_y,phi):
+    P_n_yielding = A_g * F_y
+    P_u_yielding = phi * P_n_yielding
+    return P_u_yielding
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_tensile_rupture(A_net,F_u,phi):
+    P_n_rupture = A_net * F_u
+    P_u_rupture = phi * P_n_rupture
+    return P_u_rupture
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_tensile_strength(P_u_yielding,P_u_rupture,n_members=1):
+    P_u = min(P_u_yielding,P_u_rupture) * n_members
+    return P_u
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def tension_yielding_rupture(N_r, S_r, L_ev, t, d_b, F_y, F_u, phi,n_members):
+    def _calculate_tension_yielding_rupture_bolted(N_r, S_r, L_ev, t, d_b, F_y, F_u, phi,coped = 2):
+        if coped == 2:
+            l = calculation_connection_length_bolted(N_r, S_r, L_ev)
+            A_g = calculation_area_gross(l, t)
+            A_holes = calculation_area_holes(N_r, d_b,t)
+            A_net = calculation_area_net_plates(A_g, A_holes)
+            P_n_yielding = calculation_tensile_yielding(A_g, F_y, 0.9)
+            P_n_rupture = calculation_tensile_rupture(A_net, F_u, phi)
+            P_u = calculation_tensile_strength(P_n_yielding, P_n_rupture,n_members=n_members)
+        else:
+
+        return P_u
+    return _calculate_tension_yielding_rupture_bolted(N_r, S_r, L_ev, t, d_b, F_y, F_u, phi)
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_elastic_modulus(t,l):
+    S_g = (t*l**2)/6
+    return S_g
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_plastic_modulus(t,l):
+    Z_g = (t*l**2)/4
+    return Z_g
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_plastic_modulus_holes(N_r,S_r,d_b,t):
+    d_holes = d_b + 0.0625*2
+    Z_holes_1 = (N_r%2) * ((d_b/2) * t) * d_b/4 
+    Z_holes_2 = (S_r*N_r**2* d_holes) * t/4
+    return Z_holes_1 + Z_holes_2
+
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_plastic_modulus_net(Z_g,Z_holes):
+    Z_net = Z_g - Z_holes
+    return Z_net
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_lambda_flexural(d,F_y,t,e):
+    lamb = (d*sqrt(F_y/(1)))/(10*t*sqrt(475+280*(d/e)**2))
+    return lamb
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_Critical_buckling_factor(lamb):
+    if lamb <= 0.7: Q = 1
+    elif 0.7 < lamb <= 1.41:Q = (1.34 - 0.486*lamb)
+    elif lamb > 1.41: Q = 1.30 / (lamb**2)
+    return Q
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_FCR(Q,F_y):
+    F_cr = Q*F_y
+    return F_cr
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_flexural_yielding(F_y,Z_g,e):
+    V__yielding = (F_y * Z_g)/e
+    return V__yielding
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_flexural_rupture(F_u,Z_net,e):
+    V_rupture = (F_u * Z_net)/e
+    return V_rupture
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_flexural_buckling(F_cr,S_g,e):
+    V_buckling = (F_cr * S_g)/e
+    return V_buckling
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_eccentricity(l,k_a,L_eh,N_c,_S_c):
+    e = l - k_a - L_eh - (N_c - 1) * _S_c
+    return e
+
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def flexural_14th(l , k_a, L_eh, N_c, _S_c, t, N_r, S_r, d_b, d, F_y, F_u, e_override=None):
+    d = calculation_connection_length_bolted(N_r, S_r, L_eh) if d is None else d
+    e = calculation_eccentricity(l, k_a, L_eh, N_c, _S_c) if e_override is None else e_override
+    S_g = calculation_elastic_modulus(t, d)
+    Z_g = calculation_plastic_modulus(t, d)
+    Z_hole = calculation_plastic_modulus_holes(N_r, S_r, d_b,t)
+    Z_net = calculation_plastic_modulus_net(Z_g, Z_hole)
+    lamb = calculation_lambda_flexural(d, F_y, t, e)
+    critical_buckling_factor = calculation_Critical_buckling_factor(lamb)
+    F_cr = calculation_FCR(critical_buckling_factor, F_y)
+    V_yielding = calculation_flexural_yielding(F_y, Z_g, e)
+    V_rupture = calculation_flexural_rupture(F_u, Z_net, e)
+    V_buckling = calculation_flexural_buckling(F_cr, S_g, e)
+    V_u = min(V_yielding, V_rupture, V_buckling)
+    return V_u
+
+
+# @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+# def flexural_15th():
+    
