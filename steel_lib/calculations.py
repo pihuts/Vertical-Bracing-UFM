@@ -185,10 +185,10 @@ def get_applicable_thickness(endpoint: "ConnectionEndpoint") -> float:
     if component == ConnectionComponent.WEB:
         if not hasattr(member, 'tw'): raise AttributeError("Member lacks 'tw' for web thickness.")
         thickness = member.tw
-    elif component == ConnectionComponent.FLANGE:
+    elif component == ConnectionComponent.FLANGE or component == ConnectionComponent.FLANGE_TOP:
         if not hasattr(member, 'tf'): raise AttributeError("Member lacks 'tf' for flange thickness.")
         thickness = member.tf
-    elif component in [ConnectionComponent.TOTAL, ConnectionComponent.LENGTH, ConnectionComponent.WIDTH]:
+    elif component in [ConnectionComponent.TOTAL, ConnectionComponent.GUSSET_LENGTH, ConnectionComponent.GUSSET_WIDTH, ConnectionComponent.PLATE_FACE]:
         # For plates or total sections, 't' is the primary attribute.
         # Fallback to 'tw' for other section types where 't' isn't defined.
         if hasattr(member, 't'):
@@ -526,41 +526,47 @@ class TensileYieldingCalculator:
     """
     Calculates the tensile yielding capacity of a member.
     """
-    def __init__(self, endpoint: "ConnectionEndpoint",debug:bool = False):
+    def __init__(self, endpoint:ConnectionEndpoint):
+        if endpoint.component not in [ConnectionComponent.GUSSET_LENGTH]:
+            raise ValueError(f"Tensile Yielding is only applicable to TOTAL, LENGTH, or WIDTH components, not {endpoint.component}.")
         self.endpoint = endpoint
         self.member = endpoint.member
         self.connection = endpoint.connection_configuration
-        self.Fy = self.member.Fy
-        self.Ag = get_applicable_gross_area(endpoint)
+        self.Fy = self.member.material.Fy
         self.loading_condition = getattr(self.member, 'loading_condition', 1)
-        self.load = endpoint.loads
-    @handcalc(jupyter_display=jupyter_display, precision=3, override=jupyter_format)
-    def calculations(self,F_y,A_g,load_condition,phi):
-        P_n = F_y * A_g
-        P_u = phi * P_n * load_condition
-        return P_u
-    def calculate_capacity(self, resistance_factor: float = 0.9, debug: bool = False) -> float:
-        """
-        Calculates the design tensile yielding strength.
-        """
-        nominal_strength = self.Fy * self.Ag
-        design_strength = resistance_factor * nominal_strength * self.loading_condition
-        
-        logger = DebugLogger(f"Tensile Yielding ({self.endpoint.component.name})", debug)
-        logger.add_input("Yield Strength (Fy)", self.Fy)
-        logger.add_input(f"Applicable Gross Area (Ag) for {self.endpoint.component.name}", self.Ag)
-        logger.add_input("Loading Condition", self.loading_condition)
-        logger.add_input("Resistance Factor (phi)", resistance_factor)
-        logger.add_calculation("Nominal Strength (Rn = Fy * Ag)", nominal_strength)
-        logger.add_output("Design Strength (phiRn)", design_strength)
-        logger.display()
-        self.calculations(F_y = self.Fy,A_g = self.Ag,load_condition = self.loading_condition,phi =resistance_factor)
+        self.loads = endpoint.loads
+        self.latex_config = LatexConfig(main_title="Tensile Yielding Test")
+        self.component_name = endpoint.component
+    @property
+    def length(self):
+        if self.member.type == "PL" and self.component_name == ConnectionComponent.GUSSET_LENGTH:
+            if self.member.length:
+                return self.member.length
+            if self.connection.length:
+                return self.connection.length
+            return None
+    
+    def _calculations(self,length,thickness,Fy,phi,load_condition,detailed:bool, latex_config=None):
+        # @optional_reporting_handcalc(self.latex_config,key = "Area Gross",detailed=True,jupyter_display=jupyter_display, precision=3, override="params")
+        # def calculate_area_gross():
+        @optional_reporting_handcalc(latex_config,key = "Area Gross",detailed=detailed,jupyter_display=jupyter_display, precision=3, override=jupyter_format)
+        def calculate_area_gross(L,t):
+            A_g = L * t
+            return A_g
+        @optional_reporting_handcalc(latex_config,key = "Tensile Yielding Strength Calculations",detailed=detailed,jupyter_display=jupyter_display, precision=3, override=jupyter_format)
+        def calculate_strength(F_y,A_g,load_condition,phi):
+            P_n = F_y * A_g
+            P_u = phi * P_n * load_condition
+            return P_u
+        area_gross = calculate_area_gross(L=length,t=thickness)
+        design_strength = calculate_strength(F_y=Fy,A_g=area_gross,load_condition=load_condition,phi=phi)
         return design_strength
-
-    def check_dcr(self, **kwargs) -> float:
+   
+    def check_dcr(self, detailed:bool = False) -> float:
         """Calculates the demand-to-capacity ratio."""
-        capacity = self.calculate_capacity(**kwargs)
-        return check_dcr(capacity, abs(self.load.Pu), f"Tensile Yielding ({self.endpoint.component.name})", **kwargs)
+
+        capacity = self._calculations(length = self.length, thickness = get_applicable_thickness(self.endpoint), Fy = self.Fy, phi = 0.9, load_condition = self.loading_condition, detailed=detailed, latex_config=self.latex_config)
+        return check_dcr(capacity, abs(self.loads.Pu), f"Tensile Yielding ({self.endpoint.component.name})"), self.latex_config
 
 class TensileRuptureCalculator:
     """
@@ -1635,47 +1641,93 @@ class ShearYieldingCalculator(LimitState):
     """
 
     def __init__(self, endpoint: ConnectionEndpoint):
-        if endpoint.component not in [ConnectionComponent.FLANGE_TOP]:
-            raise ValueError("ShearYieldingCalculator only supports FLANGE_TOP component.")
+        if endpoint.component not in [ConnectionComponent.FLANGE_TOP, ConnectionComponent.GUSSET_LENGTH]:
+            raise ValueError("ShearYieldingCalculator only supports FLANGE_TOP and GUSSET_LENGTH components.")
         self.loads = endpoint.loads
         self.member = endpoint.member
         self.latex_config = LatexConfig(main_title="Shear Yielding")
         self.component = endpoint.component
-        
-        #connection properties 
-        connection: Connection = endpoint.connection_configuration
 
-
+        #connection properties
+        connection: Union[WeldConfiguration, BoltConfiguration] = endpoint.connection_configuration
+        self.connection_type = connection.connection_type
+        print(f"Connection type: {self.connection_type}")
         if isinstance(connection, WeldConfiguration):
             weld_size = connection.weld_size
             weld_length = connection.length
-            self.weld_length = weld_length - 2*min(weld_size,0.3125*si.inch) 
+            self.weld_length = weld_length
+            self.weld_length_effective = weld_length - 2*min(weld_size,0.3125*si.inch) 
                     # Demand 
             if endpoint.component == ConnectionComponent.FLANGE_TOP:
                 self.demand = abs(self.loads.Vu)
-    def _calculate_capacity(self,detailed: bool = False) -> float:
-        @optional_reporting_handcalc(config_object=self.latex_config ,key="Area Top Flange",jupyter_display=False,override=jupyter_format,precision=3,detailed=detailed)
-        def area_flange_top_weld(L_weld, t_f) -> float:
-            A_n = L_weld * t_f * 2
+                self.t = self.member.tf
+            elif endpoint.component == ConnectionComponent.GUSSET_LENGTH:
+                self.demand = abs(self.loads.Vu)
+                self.t = self.member.t
+        # member properties
+            self.Fu = self.member.material.Fu
+            self.Fy = self.member.material.Fy
+    def _calculate_capacity(self, detailed: bool = False, latex_config=None, component=None, connection_type=None, weld_length=None, weld_length_effective=None, t=None, Fu=None, Fy=None) -> float:
+        @optional_reporting_handcalc(config_object=latex_config ,key="Area Gross",jupyter_display=False,override=jupyter_format,precision=3,detailed=detailed)
+        def calculation_area_gross(L, t,N_planes) -> float:
+            A_g = L * t * N_planes
+            return A_g
+        @optional_reporting_handcalc(config_object=latex_config ,key="Area Deduction",jupyter_display=False,override=jupyter_format,precision=3,detailed=detailed)
+        def calculation_area_deduction(d_holes = 0 *si.inch,n_holes = 0,t = 0 * si.inch ,N_planes = 1, Connection_type = "bolted") -> float:
+            if Connection_type == "bolted":A_holes = d_holes * n_holes * t * N_planes
+            elif Connection_type == "welded": A_holes = 0 * si.inch**2
+            return A_holes
+        @optional_reporting_handcalc(config_object=latex_config ,key="Area Net",jupyter_display=False,override=jupyter_format,precision=3,detailed=detailed)
+        def calculation_area_net(A_g,A_holes) -> float:
+            A_n = A_g - A_holes
             return A_n
-        @optional_reporting_handcalc(config_object=self.latex_config ,key="Shear Yielding Strength",jupyter_display=False,override=jupyter_format,precision=3,detailed=detailed)
-        def calculate_strength_yield(A_g,F_y,phi) -> float:
+        @optional_reporting_handcalc(config_object=latex_config ,key="Shear Yielding Strength",jupyter_display=False,override=jupyter_format,precision=3,detailed=detailed)
+        def calculation_strength_yield(A_g,F_y,phi) -> float:
             V_n = 0.6 * F_y * A_g
             V_u = V_n * phi
             return V_u
-        @optional_reporting_handcalc(config_object=self.latex_config ,key="Shear Rupture Strength",jupyter_display=False,override=jupyter_format,precision=3,detailed=detailed)
-        def calculate_strength_rupture(A_n,F_u,phi) -> float:
+        @optional_reporting_handcalc(config_object=latex_config ,key="Shear Rupture Strength",jupyter_display=False,override=jupyter_format,precision=3,detailed=detailed)
+        def calculation_strength_rupture(A_n,F_u,phi) -> float:
             V_n = 0.6 * F_u * A_n
             V_u = V_n * phi
             return V_u
-        if self.component == ConnectionComponent.FLANGE_TOP:
-            A_n = area_flange_top_weld(L_weld=self.weld_length,t_f=self.member.tf)
-            V_u = calculate_strength_rupture(A_n=A_n,F_u=self.member.material.Fu,phi=0.75)
+        @optional_reporting_handcalc(config_object=latex_config ,key="Governing Shear Strength",jupyter_display=False,override=jupyter_format,precision=3,detailed=detailed)
+        def calculation_governing_shear_strength(V_u_yield,V_u_rupture) -> float:
+            V_u =  min(V_u_yield, V_u_rupture)
             return V_u
+        if component == ConnectionComponent.FLANGE_TOP and connection_type == "welded":
+            number_planes = 2 
+            length = weld_length_effective
+            thickness = t
+
+
+        elif component == ConnectionComponent.GUSSET_LENGTH and connection_type == "welded":
+            number_planes = 1
+            length = weld_length
+            thickness = t
+
+        area_gross = calculation_area_gross(L=length, t=thickness, N_planes=number_planes)
+        area_holes = calculation_area_deduction(d_holes=0 *si.inch,n_holes=0,t=thickness ,N_planes=number_planes, Connection_type = "welded")
+        area_net = calculation_area_net(A_g=area_gross,A_holes=area_holes)
+        design_strength_rupture = calculation_strength_rupture(A_n=area_net,F_u=Fu,phi=0.75)
+        design_strength_yielding = calculation_strength_yield(A_g=area_gross,F_y=Fy,phi=1)
+        V_u = calculation_governing_shear_strength(V_u_yield=design_strength_yielding,V_u_rupture=design_strength_rupture)
+         # Return the minimum of the two strengths
+        return V_u
 
     def check_dcr(self, detailed: bool = False) -> float:
         """Calculates the demand-to-capacity ratio."""
-        capacity = self._calculate_capacity(detailed=detailed)
+        capacity = self._calculate_capacity(
+            detailed=detailed,
+            latex_config=self.latex_config,
+            component=self.component,
+            connection_type=self.connection_type,
+            weld_length=self.weld_length,
+            weld_length_effective=self.weld_length_effective,
+            t=self.t,
+            Fu=self.Fu,
+            Fy=self.Fy
+        )
         return check_dcr(capacity, abs(self.demand), f"Shear Yielding"),self.latex_config
 
 
@@ -1965,6 +2017,8 @@ class WeldCalculator(LimitState):
         Initializes the WeldCalculator with the connection endpoint.
         Performs input validation and extracts necessary properties.
         """
+        if endpoint.component not in [ConnectionComponent.GUSSET_LENGTH,]:
+            raise ValueError("ShearYieldingCalculator only supports FLANGE_TOP and GUSSET_LENGTH components.")
         # Input validation
         if not hasattr(endpoint, 'loads') or endpoint.loads is None:
             raise ValueError("Endpoint must have valid loads.")
@@ -1992,26 +2046,27 @@ class WeldCalculator(LimitState):
         self.member = endpoint.member
         if not hasattr(self.member, 'material') or self.member.material is None:
             raise ValueError("Member must have a valid material.")
-        self.F_ygp = self.member.material.Fy  # Yield strength of the member
-        self.F_ugp = self.member.material.Fu  # Ultimate strength of the member
-        if not hasattr(self.member, 't') or self.member.t is None:
-            raise ValueError("Member must have a valid thickness 't'.")
-        self.t_gp = self.member.t  # Thickness of the member
+        self.Fy = self.member.material.Fy  # Yield strength of the member
+        self.Fu = self.member.material.Fu  # Ultimate strength of the member
+
+        self.t = get_applicable_thickness(endpoint) # Thickness of the member
 
         # Configuration for LaTeX reporting
         self.latex_config = LatexConfig(main_title="Weld Strength")
-
-    def _calculate_capacity(self,detailed: bool = False) -> float:
+        self.connection_component = endpoint.component
+    def _calculate_capacity(self,detailed: bool = False, latex_config=None, connection_component=None, member_role=None, Vu=None, Peq=None, Pu=None, Fy=None, Fu=None, t=None, f_exx=None, weld_size=None, weld_length=None) -> float:
         """
         Performs intermediate calculations for weld design.
+        This method now takes all necessary arguments to make it independent of self attributes.
         """
         # This method can be expanded for additional calculations if needed.
-        @optional_reporting_handcalc(config_object=self.latex_config ,key="Controlling Angle",jupyter_display=False,override="params",precision=3,detailed=detailed)
-        def _controlling_angle(V_u,P_eq,H_u):
+        @optional_reporting_handcalc(config_object=latex_config ,key="Controlling Angle",jupyter_display=False,override=jupyter_format,precision=3,detailed=detailed)
+        def _controlling_angle(V_u,P_eq,P_u):
 
-            theta = math.atan((V_u+P_eq) / H_u) 
-            return theta
-        @optional_reporting_handcalc(config_object=self.latex_config ,key="Weld Limit",jupyter_display=False,override="params",precision=3,detailed=detailed)
+            theta_w = math.atan((V_u+P_eq) / P_u) 
+            k_ds = ( 1 + 0.5 * sin(theta_w)**1.5)
+            return k_ds
+        @optional_reporting_handcalc(config_object=latex_config ,key="Weld Limit",jupyter_display=False,override=jupyter_format,precision=3,detailed=detailed)
         def _calculation_weld_limit( F_ygp,F_ugp,t_gp,F_uw,W_size):
             k_factor_ty = 0.9
             k_factor_tr = 0.75
@@ -2019,28 +2074,51 @@ class WeldCalculator(LimitState):
             W_limit = min(max(F_ygp,50*si.ksi)*t_gp *k_factor_ty, max(F_ugp,65*si.ksi)*t_gp *k_factor_tr) / (k_factor_weld*2*0.60*F_uw*1.5*(0.5*sqrt(2)))
             W_weld = min(W_size,W_limit)
             return W_limit,W_weld
-        @optional_reporting_handcalc(config_object=self.latex_config ,key="Weld Strength",jupyter_display=False,override="params",precision=3,detailed=detailed)
-        def _calculation_weld_strength( L_b,W_size,W_limit,theta_w,F_exx,phi):
+        @optional_reporting_handcalc(config_object=latex_config ,key="Weld Strength",jupyter_display=False,override=jupyter_format,precision=3,detailed=detailed)
+        def _calculation_weld_strength( L_b,W_size,W_limit,k_ds,F_exx,phi):
             L_weld = L_b - 2*min(W_size,0.3125*si.inch) 
 
             W_weld = min(W_size,W_limit)
 
-            R_n = 0.6 * F_exx*sqrt(2)/2 *W_weld * 2 * L_weld * ( 1 + 0.5 * sin(theta_w)**1.5)
+            R_n = 0.6 * F_exx*sqrt(2)/2 *W_weld * 2 * L_weld * k_ds
 
             R_u = phi * R_n
             return R_u
-        
-        theta_w = _controlling_angle(V_u = self.loads.Vu,P_eq=self.loads.Peq,H_u=self.loads.Pu)
-        W_limit,W_weld = _calculation_weld_limit( F_ygp=self.F_ygp,F_ugp=self.F_ugp,t_gp=self.t_gp,F_uw=self.f_exx,W_size=self.weld_size)
-        R_u = _calculation_weld_strength( L_b=self.weld_length,W_size=W_weld,W_limit=W_limit,theta_w=theta_w,F_exx=self.f_exx,phi=0.75)
+        print(connection_component,member_role)
+        if connection_component == ConnectionComponent.GUSSET_LENGTH:
+            weld_orientation = "horizontal"
+        elif connection_component == ConnectionComponent.GUSSET_WIDTH:
+            weld_orientation = "vertical"
+        elif member_role == "Column":
+            weld_orientation = "vertical"
+        elif member_role == "endplate":
+            weld_orientation = "vertical"
+        k_ds = _controlling_angle(V_u = Vu,P_eq=Peq,P_u=Pu)
+        W_limit,W_weld = _calculation_weld_limit( F_ygp=Fy,F_ugp=Fu,t_gp=t,F_uw=f_exx,W_size=weld_size)
+        R_u = _calculation_weld_strength( L_b=weld_length,W_size=W_weld,W_limit=W_limit,k_ds=k_ds,F_exx=f_exx,phi=0.75)
+        print(f"theta:{k_ds},w_limit:{W_limit},W_weld:{W_weld},R_u:{R_u}")
         return R_u
     def check_dcr(self, detailed: bool = False) -> float:
         """Calculates the demand-to-capacity ratio."""
-        capacity = self._calculate_capacity(detailed=detailed)
+        capacity = self._calculate_capacity(
+            detailed=detailed,
+            latex_config=self.latex_config,
+            connection_component=self.connection_component,
+            member_role=self.member.role,
+            Vu=self.loads.Vu,
+            Peq=self.loads.Peq,
+            Pu=self.loads.Pu,
+            Fy=self.Fy,
+            Fu=self.Fu,
+            t=self.t,
+            f_exx=self.f_exx,
+            weld_size=self.weld_size,
+            weld_length=self.weld_length
+        )
 
-        return check_dcr(capacity=capacity, demand=abs(self.loads.Rw), limit_state_name=f"Weld"),self.latex_config
+        return check_dcr(capacity=capacity, demand=abs(max(self.loads.Rw,self.loads.Vu)), limit_state_name=f"Weld"),self.latex_config
 
 
 # aisc_360_14th = [BoltShearCalculator, BoltTensileCalculator,TensileYieldingCalculator,TensileRuptureCalculator,BlockShearCalculator]
 # aisc_360_14th = [BoltTensileCalculator]
-aisc_360_14th = [ShearYieldingCalculator,WeldCalculator]
+aisc_360_14th = [ShearYieldingCalculator,WeldCalculator,TensileYieldingCalculator]

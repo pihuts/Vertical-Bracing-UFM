@@ -7,6 +7,8 @@ setup(
     install_requires=[
         'forallpeople',
         'steelpy',
+        'numba',
+        'handcalcs',
     ],
     author='Kilo Code',
     author_email='',

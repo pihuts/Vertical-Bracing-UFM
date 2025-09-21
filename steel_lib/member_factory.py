@@ -42,7 +42,7 @@ class MemberFactory:
         if isinstance(angle, (int, float)):
             angle = angle * math.pi / 180.0 # Convert degrees to radians
         material = MATERIALS[material]
-        plate = Plate(width=width, length=length, t=thickness, angle=angle, material=material, loading_condition=loading_condition, Role=role)
+        plate = Plate(width=width, length=length, t=thickness, angle=angle, material=material, loading_condition=loading_condition, role=role)
         return plate
 
     @staticmethod
@@ -88,8 +88,8 @@ class MemberFactory:
 
         # 3. Add the necessary material and type properties
         section.add_property("material", material)
-        section.add_property("Type", shape_type)
-        section.add_property("Role", role)
+        section.add_property("type", shape_type)
+        section.add_property("role", role)
         section.add_property("angle", angle)
         if length is not None:
             section.add_property("length", length * si.inch)

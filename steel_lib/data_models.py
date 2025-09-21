@@ -26,10 +26,11 @@ class ConnectionComponent(Enum):
     TOTAL = "total"
     WEB = "web"
     FLANGE = "flange"
-    LENGTH = "along_length"
-    WIDTH = "along_width"
+    GUSSET_LENGTH = "gusset_length"
+    GUSSET_WIDTH = "gusset_width"
     FLANGE_TOP = "flange_top"
     FLANGE_BOTTOM = "flange_bottom"
+    PLATE_FACE = "plate_face"
 
 
 @dataclass(frozen=True)
@@ -59,9 +60,9 @@ class Plate:
     length: Any = 0 * si.inch
     width: Any = 0 * si.inch
     clipping: Any = 0 * si.inch
-    Type: str = "PL"
+    type: str = "PL"
     geometry: "GeometricProperties" = field(init=False)
-    Role: str = "PLATE"
+    role: str = "PLATE"
     angle: float = 0.0  # Angle in radians, default to 0 (horizontal)
 
     def __post_init__(self):
@@ -177,7 +178,12 @@ class BoltConfiguration:
                     f"Valid options are: {list(BOLT_GRADES.keys())}"
                 )
             self.bolt_grade = grade_object
-
+    @property
+    def length(self):
+        if self.n_columns > 1:
+            return self.column_spacing * (self.n_columns - 1) + 2 * self.edge_distance_horizontal
+        else:
+            return 2 * self.edge_distance_vertical
 from steelpy import aisc
 from typing import Any, Type
 
@@ -200,7 +206,7 @@ class WeldConfiguration:
     weld_size: float
     electrode: Literal["e60xx", "e70xx", "e80xx"] = "e70xx"  # Link to the WeldElectrode object
     weld_type: WeldType = "fillet" # Default to fillet, the most common type
-    connection_type="welded",
+    connection_type: Literal["welded"] = "welded"
     length: float = None
     
     def __post_init__(self):
@@ -476,11 +482,13 @@ class Connection:
             'BEAM':       {'Pu': self.global_loads.fx, 'Vu': self.global_loads.fy},
             'COLUMN':     {'Pu': self.global_loads.fy, 'Vu': self.global_loads.fx},
             'GIRDER':     {'Pu': self.global_loads.fx, 'Vu': self.global_loads.fy,'out_of_plane_force': self.global_loads.fz},
-            'END_PLATE':  {'Pu': self.global_loads.fy, 'Vu': self.global_loads.fx},
+            ('END_PLATE','plate_face'):  {'Pu': self.global_loads.fx, 'Vu': self.global_loads.fy},
             'SHEAR_PLATE':{'Pu': self.global_loads.fx, 'Vu': self.global_loads.fy},
             'BRACE':   {'Pu': self.global_loads.direct_load, 'Vu': 0 * si.kip},
-            ('GUSSET_PLATE','along_length'): {'Pu': self.global_loads.fx + self.global_loads.direct_load, 'Vu': self.global_loads.fy, 'Peq': self.global_loads.fxeq, 'Rw': self.global_loads.rw},
+            ('GUSSET_PLATE','gusset_length'): {'Pu': self.global_loads.fy + self.global_loads.direct_load, 'Vu': self.global_loads.fx, 'Peq': self.global_loads.fxeq, 'Rw': self.global_loads.rw},
+            ('GUSSET_PLATE','gusset_width'): {'Pu': self.global_loads.fx + self.global_loads.direct_load, 'Vu': self.global_loads.fy, 'Peq': self.global_loads.fxeq, 'Rw': self.global_loads.rw},
             ('BEAM', 'flange_top'): {'Pu': self.global_loads.fx, 'Vu': self.global_loads.rw if self.global_loads.rw else self.global_loads.fy},
+        
         }
 
         # Step 2: Assign loads based on explicit roles if they exist
