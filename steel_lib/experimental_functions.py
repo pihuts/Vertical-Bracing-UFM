@@ -60,11 +60,7 @@ particle_dtype = np.dtype([
     ('position', np.float64)   # A 64-bit float for the particle's current position
 ])
 # This is the JIT-compiled function, defined once at the module level.
-@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-def bolt_shear(F_nv, A_bolt, N_shear_planes: int, phi: float):
-    V_n = F_nv * A_bolt * N_shear_planes
-    V_u = phi * V_n
-    return V_u
+
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
 def calculation_bolt_bearing(l_c_inner,l_c_edge,t,F_u,N_bolts,d_bolt,phi,c):
     V_u_bearing = 2.4 * d_bolt * t * F_u
@@ -303,7 +299,7 @@ def shear_yielding_rupture(N_r, S_r, L_ev, t, d_b, F_y, F_u, phi,n_members=1,cop
 
 
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-def calculation_ubs_w_section(b_f,t_f,d,t_w,l):
+def calculation_ubs_w_section_uncoped(b_f,t_f,d,t_w,l):
     A_flange = (b_f/2 * t_f)
     M_arm_flange =  (b_f/4)
     A_web = (d - 2*t_f)* t_w/2
@@ -312,9 +308,7 @@ def calculation_ubs_w_section(b_f,t_f,d,t_w,l):
     U_bs_1 = 1 - x_g/l
     return U_bs_1
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-def calculation_ubs_w_section_coped(A_g,t_f,d,t_w,n_flange,d_top,d_bot,U_bs_1 = None):
-    l_conn = d - d_top - d_bot - t_f * n_flange
-    A_conn = l_conn * t_w
+def calculation_ubs_w_section_coped(A_g,A_conn,t_f,d,t_w,n_flange,d_top,d_bot,U_bs_1 = None):
     U_bs_limit = A_conn /A_g
     if U_bs_1: U_bs = max(U_bs_limit,U_bs_1)
     else: U_bs = U_bs_limit
@@ -324,10 +318,18 @@ def calculation_connection_length_bolted(N_r,S_r,L_ev):
     l = (N_r-1) * S_r + L_ev * 2
     return l
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-def calculation_area_gross(l,t,coped = 2):
-    if coped == 2:A_g = l*t
-    if coped = 
+def calculation_connection_width_bolted(N_c,S_c,L_eh,a = None):
+    l = (N_c-1) * S_c + L_eh * 2
+    return l
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_area_gross(l,t):
+    A_g = l*t
     return A_g
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_area_tension_beams(A_flange,A_web,coped):
+    if coped == 0: A_tension = A_flange + A_web
+    elif coped > 0: A_tension = A_web
+    return A_tension
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
 def calculation_area_holes(N_r,d_b,t):
     d_holes = d_b + 0.0625 * 2
@@ -356,11 +358,21 @@ def calculation_tensile_rupture(A_net,F_u,phi):
     P_u_rupture = phi * P_n_rupture
     return P_u_rupture
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_area_flange(b_f,t_f,n_flange):
+    A_flange = b_f * t_f * n_flange
+    return A_flange
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_area_web(d,t_w,t_f,d_top,d_bot):
+    d_top_cut = max(d_top,t_f)
+    d_bot_cut = max(d_bot,t_f)
+    A_web = (d - d_top_cut * d_bot_cut) * t_w
+    return A_web
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
 def calculation_tensile_strength(P_u_yielding,P_u_rupture,n_members=1):
     P_u = min(P_u_yielding,P_u_rupture) * n_members
     return P_u
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-def tension_yielding_rupture(N_r, S_r, L_ev, t, d_b, F_y, F_u, phi,n_members):
+def tension_yielding_rupture(b_f,t_f,t_w,d,N_r, S_r, L_ev, t, d_b, F_y, F_u, phi,n_members,A_g = 0):
     def _calculate_tension_yielding_rupture_bolted(N_r, S_r, L_ev, t, d_b, F_y, F_u, phi,coped = 2):
         if coped == 2:
             l = calculation_connection_length_bolted(N_r, S_r, L_ev)
@@ -370,9 +382,8 @@ def tension_yielding_rupture(N_r, S_r, L_ev, t, d_b, F_y, F_u, phi,n_members):
             P_n_yielding = calculation_tensile_yielding(A_g, F_y, 0.9)
             P_n_rupture = calculation_tensile_rupture(A_net, F_u, phi)
             P_u = calculation_tensile_strength(P_n_yielding, P_n_rupture,n_members=n_members)
-        else:
-
-        return P_u
+        elif coped == 0:
+            U_bs = calculation_ubs_w_section_uncoped(b_f=b_f,t_f = t_f ,d = d , t_w = t_w , l = l)
     return _calculate_tension_yielding_rupture_bolted(N_r, S_r, L_ev, t, d_b, F_y, F_u, phi)
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
 def calculation_elastic_modulus(t,l):
@@ -441,7 +452,91 @@ def flexural_14th(l , k_a, L_eh, N_c, _S_c, t, N_r, S_r, d_b, d, F_y, F_u, e_ove
     V_u = min(V_yielding, V_rupture, V_buckling)
     return V_u
 
+def _calculations(self,Vu,no_bolts,F_nv,F_nt_,A_bolt,phi,detailed:bool):
+    @optional_reporting_handcalc(config_object=self.latex_config, detailed=detailed, key = "Parameters",jupyter_display=jupyter_display, precision=3, override="params")
+    def parameters(Vu,no_bolts,F_nv,F_nt_,A_bolt,phi):
+        Vu = Vu
+        no_bolts = no_bolts
+        F_nv = F_nv
+        F_nt_ = F_nt_
+        A_bolt = A_bolt
+        phi = phi
 
+    @optional_reporting_handcalc(config_object=self.latex_config, key = "Bolt Tensile Modified Strength Calculations", detailed=detailed,jupyter_display=jupyter_display, precision=3, override=jupyter_format)
+    def calculations(Vu,no_bolts,F_nv,F_nt_,A_bolt,phi):
+        shear_bolt = Vu / no_bolts
+        F_rv = shear_bolt/A_bolt
+        interaction_coefficient = F_rv / (phi * F_nv) # Ratio of required shear stress to available shear stress
+        F_prime_nt = 1.3 * F_nt_ - F_nt_ * interaction_coefficient 
+        F_nt = min(F_prime_nt, F_nt_) * A_bolt * phi
+        return F_nt
+    
+    result = calculations(Vu=Vu,no_bolts=no_bolts,F_nv=F_nv,F_nt_=F_nt_,A_bolt=A_bolt,phi=phi)
+    return result
 # @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
 # def flexural_15th():
-    
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def bolt_shear(F_nv, A_bolt, N_shear_planes: int, phi: float,):
+    V_n = F_nv * A_bolt * N_shear_planes
+    V_u = phi * V_n
+    return V_u
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def bolt_shear_modified(F_nv,F_nt, A_bolt, N_shear_planes: int,n_bolts: int, phi: float,P_u):
+    F_rt = P_u / (phi * A_bolt * N_shear_planes)
+    F_nv_prime = 1.3 * F_nv - F_nv * (F_rt / F_nt)
+    F_nv_prime = min(F_nv,max(F_nv_prime, 0))  # Ensure F_nv_prime is not negative
+    V_n = F_nv_prime * A_bolt * N_shear_planes
+    V_u = phi * V_n
+    return V_u
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def bolt_tension_modified(F_nv,F_nt, A_bolt, n_bolts: int, phi: float,V_u):
+    F_rv = V_u / (phi * A_bolt * n_bolts)
+    F_nt_prime = 1.3 * F_nt - F_nt * (F_rv / F_nv)
+    F_nt_prime = min(F_nt,max(F_nt_prime, 0))  # Ensure F_nt_prime is not negative
+    P_u = F_nt_prime * A_bolt * n_bolts
+    return P_u
+
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_b_prying(L_osl, L_eh, t):
+    b = L_osl - L_eh - t/2
+    return b
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_b_prime_prying(b,d_bolt):
+    b_prime = b - 0.5 * d_bolt
+    return b_prime
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_a_prying(L_eh):
+    a = L_eh
+    return a
+
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_a_prime_prying(a,b,d_bolt):
+    a_prime = min(1.25*b,a ) + 0.5 * d_bolt
+
+    return a_prime
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_tributary_length_prying(S_r,ga,b,L_ev):
+    p_1 = L_ev + 0.5 *S_r
+    p_2 = 2 * b
+    p = min(p_1, p_2,ga,S_r)
+    return p
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_delta_prying(dv,p):
+    delta = 1 - dv/p
+    return delta
+
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_rho_prying(b_prime,a_prime,delta):
+    rho = (b_prime/a_prime)
+    return rho
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_beta_prying(rho,N_t,B,P_u):
+    beta = (1/rho) * (((2*N_t*B)/P_u )- 1)
+    return beta
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_alpha_prime_prying(rho):
+    pass
+
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def prying_action():
+    pass
