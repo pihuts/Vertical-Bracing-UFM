@@ -5,7 +5,7 @@ from forallpeople import Physical
 from numpy import atan, sin , cos, tan
 import numpy as np  
 from typing import Literal
-from math import sqrt
+from math import sqrt,pi
 def optional_reporting_handcalc(config_object, *, key: str, detailed: Literal["calculation",'latex','test'] = False, **handcalc_kwargs):
     """
     A single, powerful conditional decorator that combines the functionality
@@ -489,11 +489,11 @@ def bolt_shear_modified(F_nv,F_nt, A_bolt, N_shear_planes: int,n_bolts: int, phi
     V_u = phi * V_n
     return V_u
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-def bolt_tension_modified(F_nv,F_nt, A_bolt, n_bolts: int, phi: float,V_u):
+def calculation_bolt_tension_modified(F_nv,F_nt, A_bolt, n_bolts: int, phi: float,V_u):
     F_rv = V_u / (phi * A_bolt * n_bolts)
-    F_nt_prime = 1.3 * F_nt - F_nt * (F_rv / F_nv)
-    F_nt_prime = min(F_nt,max(F_nt_prime, 0))  # Ensure F_nt_prime is not negative
-    P_u = F_nt_prime * A_bolt * n_bolts
+    F_nt_prime_ = max(1.3 * F_nt - F_nt * (F_rv / F_nv),0)
+    F_nt_prime = min(F_nt,F_nt_prime_)  
+    P_u = F_nt_prime * A_bolt * 0.9
     return P_u
 
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
@@ -526,17 +526,41 @@ def calculation_delta_prying(dv,p):
     return delta
 
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-def calculation_rho_prying(b_prime,a_prime,delta):
-    rho = (b_prime/a_prime)
+def calculation_rho_prying(b_prime,a_prime):
+    rho = b_prime/a_prime
     return rho
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-def calculation_beta_prying(rho,N_t,B,P_u):
+def calculation_beta_prying(rho,N_t,B,P_u,p):
     beta = (1/rho) * (((2*N_t*B)/P_u )- 1)
     return beta
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-def calculation_alpha_prime_prying(rho):
-    pass
+def calculation_alpha_prime_prying(beta,delta   ):
+    if beta >= 1: alpha_prime = 1
+    else: alpha_prime = min(1,(1/delta)*(beta/(1-beta)))
+    return alpha_prime
 
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-def prying_action():
-    pass
+def calculation_area_bolt(d):
+    A_bolt = ((d**2)/4) * pi
+    return A_bolt
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_prying_action(t, F_u, N_t, p, b_prime, delta, alpha_prime, prying):
+    if not prying: P_n = (t**2*(p*F_u)*(2*N_t))/(4*b_prime)
+    else: P_n = ((2*N_t*t**2*p*F_u)/(4*b_prime))*(1+delta*alpha_prime)
+    return P_n
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def prying_action(t, F_u,F_nv,F_nt, N_t,n_bolts, L_osl, L_eh, L_ev, d_bolt, dv, S_r, ga,V_u, P_u, prying: bool):
+    A_bolt = calculation_area_bolt(d_bolt)
+    B = calculation_bolt_tension_modified(F_nv = F_nv,F_nt = F_nt, A_bolt = A_bolt, n_bolts= n_bolts, phi = 0.9,V_u = V_u)
+    b = calculation_b_prying(L_osl=L_osl, L_eh=L_eh, t=t)
+    b_prime = calculation_b_prime_prying(b=b, d_bolt=d_bolt)
+    a = calculation_a_prying(L_eh=L_eh)
+    a_prime = calculation_a_prime_prying(a=a, b=b, d_bolt=d_bolt)
+    p = calculation_tributary_length_prying(S_r=S_r, ga=ga, b=b, L_ev=L_ev)
+    delta = calculation_delta_prying(dv=dv, p=p)
+    rho = calculation_rho_prying(b_prime=b_prime, a_prime=a_prime)
+    beta = calculation_beta_prying(rho=rho, N_t=N_t, B=B, P_u=P_u, p=p)
+    alpha_prime = calculation_alpha_prime_prying(beta=beta, delta=delta)
+    
+    P_n = calculation_prying_action(t=t, F_u=F_u, N_t=N_t, p=p, b_prime=b_prime, delta=delta, alpha_prime=alpha_prime, prying=prying)
+    return P_n
