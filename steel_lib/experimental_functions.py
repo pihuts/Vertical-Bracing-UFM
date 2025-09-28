@@ -5,7 +5,8 @@ from forallpeople import Physical
 from numpy import atan, sin , cos, tan
 import numpy as np  
 from typing import Literal
-from math import sqrt,pi
+from math import sqrt,pi,inf
+from math import log as ln
 def optional_reporting_handcalc(config_object, *, key: str, detailed: Literal["calculation",'latex','test'] = False, **handcalc_kwargs):
     """
     A single, powerful conditional decorator that combines the functionality
@@ -51,6 +52,10 @@ def optional_reporting_handcalc(config_object, *, key: str, detailed: Literal["c
             return njit(func, fastmath=True)
         elif detailed == 'test':
             return handcalc(jupyter_display=True,precision=3,override='long')(func)
+        elif detailed == 'base':
+            # --- BASE PATH ---
+            # Return the original function without any decorators or modifications
+            return func
     return decorator
 
 detailed = 'calculation'
@@ -251,7 +256,7 @@ def block_shear(P_u, V_u, F_y, F_u, t, N_r, S_r, N_c, S_c, L_ev, L_eh, d_v, d_h,
 
 
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-def calculation_connection_length_bolted(N_r,S_r,L_ev):
+def calculation_plate_length_bolted(N_r,S_r,L_ev):
     l = (N_r-1) * S_r + L_ev * 2
     return l
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
@@ -285,7 +290,7 @@ def calculation_shear_strength(V_u_yielding,V_u_rupture,n_members=1,coped=0):
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
 def shear_yielding_rupture(N_r, S_r, L_ev, t, d_b, F_y, F_u, phi,n_members=1,coped = 0):
     def _calculate_shear_yielding_rupture_bolted(N_r, S_r, L_ev, t, d_b, F_y, F_u, phi):
-        l = calculation_connection_length_bolted(N_r, S_r, L_ev)
+        l = calculation_plate_length_bolted(N_r, S_r, L_ev)
         A_g = calculation_area_gross(l, t)
         A_holes = calculation_area_holes(N_r, d_b,t)
         A_net = calculation_area_net_plates(A_g, A_holes)
@@ -314,7 +319,7 @@ def calculation_ubs_w_section_coped(A_g,A_conn,t_f,d,t_w,n_flange,d_top,d_bot,U_
     else: U_bs = U_bs_limit
     return U_bs
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-def calculation_connection_length_bolted(N_r,S_r,L_ev):
+def calculation_plate_length_bolted(N_r,S_r,L_ev):
     l = (N_r-1) * S_r + L_ev * 2
     return l
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
@@ -375,7 +380,7 @@ def calculation_tensile_strength(P_u_yielding,P_u_rupture,n_members=1):
 def tension_yielding_rupture(b_f,t_f,t_w,d,N_r, S_r, L_ev, t, d_b, F_y, F_u, phi,n_members,A_g = 0):
     def _calculate_tension_yielding_rupture_bolted(N_r, S_r, L_ev, t, d_b, F_y, F_u, phi,coped = 2):
         if coped == 2:
-            l = calculation_connection_length_bolted(N_r, S_r, L_ev)
+            l = calculation_plate_length_bolted(N_r, S_r, L_ev)
             A_g = calculation_area_gross(l, t)
             A_holes = calculation_area_holes(N_r, d_b,t)
             A_net = calculation_area_net_plates(A_g, A_holes)
@@ -395,10 +400,10 @@ def calculation_plastic_modulus(t,l):
     return Z_g
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
 def calculation_plastic_modulus_holes(N_r,S_r,d_b,t):
-    d_holes = d_b + 0.0625*2
-    Z_holes_1 = (N_r%2) * ((d_b/2) * t) * d_b/4 
-    Z_holes_2 = (S_r*N_r**2* d_holes) * t/4
-    return Z_holes_1 + Z_holes_2
+    d_holes = d_b + 0.0625
+    if N_r%2 == 0: Z_holes = (t/4) * (S_r*N_r**2* d_holes)
+    elif N_r%2 != 0: Z_holes =(t/4) * (d_holes**2+(N_r**2-1)*S_r*d_holes )
+    return Z_holes
 
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
 def calculation_plastic_modulus_net(Z_g,Z_holes):
@@ -437,7 +442,7 @@ def calculation_eccentricity(l,k_a,L_eh,N_c,_S_c):
 
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
 def flexural_14th(l , k_a, L_eh, N_c, _S_c, t, N_r, S_r, d_b, d, F_y, F_u, e_override=None):
-    d = calculation_connection_length_bolted(N_r, S_r, L_eh) if d is None else d
+    d = calculation_plate_length_bolted(N_r, S_r, L_eh) if d is None else d
     e = calculation_eccentricity(l, k_a, L_eh, N_c, _S_c) if e_override is None else e_override
     S_g = calculation_elastic_modulus(t, d)
     Z_g = calculation_plastic_modulus(t, d)
@@ -497,8 +502,8 @@ def calculation_bolt_tension_modified(F_nv,F_nt, A_bolt, n_bolts: int, phi: floa
     return P_u
 
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-def calculation_b_prying(L_osl, L_eh, t):
-    b = L_osl - L_eh - t/2
+def calculation_b_prying(L, L_eh, t = 0):
+    b = L - L_eh - t/2
     return b
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
 def calculation_b_prime_prying(b,d_bolt):
@@ -549,18 +554,98 @@ def calculation_prying_action(t, F_u, N_t, p, b_prime, delta, alpha_prime, pryin
     else: P_n = ((2*N_t*t**2*p*F_u)/(4*b_prime))*(1+delta*alpha_prime)
     return P_n
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-def prying_action(t, F_u,F_nv,F_nt, N_t,n_bolts, L_osl, L_eh, L_ev, d_bolt, dv, S_r, ga,V_u, P_u, prying: bool):
+def prying_action(t, F_u,F_nv,F_nt, N_t,n_bolts, L, L_eh, L_ev, d_bolt, dv, S_r, ga,V_u, P_u, prying: bool,bf =None):
+
+
     A_bolt = calculation_area_bolt(d_bolt)
     B = calculation_bolt_tension_modified(F_nv = F_nv,F_nt = F_nt, A_bolt = A_bolt, n_bolts= n_bolts, phi = 0.9,V_u = V_u)
-    b = calculation_b_prying(L_osl=L_osl, L_eh=L_eh, t=t)
+    if bf:
+        L = ga/2
+        b = calculation_b_prying(L=L, L_eh=0, t=t)
+        p = calculation_tributary_length_prying(S_r=S_r, ga=ga, b=b, L_ev=np.inf)
+    else:b = calculation_b_prying(L=L, L_eh=L_eh, t=t);p = calculation_tributary_length_prying(S_r=S_r, ga=ga, b=b, L_ev=L_ev)
+
     b_prime = calculation_b_prime_prying(b=b, d_bolt=d_bolt)
     a = calculation_a_prying(L_eh=L_eh)
     a_prime = calculation_a_prime_prying(a=a, b=b, d_bolt=d_bolt)
-    p = calculation_tributary_length_prying(S_r=S_r, ga=ga, b=b, L_ev=L_ev)
+    
     delta = calculation_delta_prying(dv=dv, p=p)
     rho = calculation_rho_prying(b_prime=b_prime, a_prime=a_prime)
     beta = calculation_beta_prying(rho=rho, N_t=N_t, B=B, P_u=P_u, p=p)
     alpha_prime = calculation_alpha_prime_prying(beta=beta, delta=delta)
-    
     P_n = calculation_prying_action(t=t, F_u=F_u, N_t=N_t, p=p, b_prime=b_prime, delta=delta, alpha_prime=alpha_prime, prying=prying)
     return P_n
+
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_unbraced_length(a = None, s_b = None,W = None ,g_a = None, k_a = None, t = None):
+    if a is not None: L_u = a
+    elif s_b is not None and W is not None:L_u = s_b + min(W, 0.3125)
+    elif g_a is not None and k_a is not None and t is not None: L_u = (g_a + t) / 2 - k_a
+    else:L_u = 0.0  # Default value for Numba compatibility
+    return L_u
+
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_C_b(L_b,d,d_ct):
+    C_b = max((3 + ln(L_b/d))*(1-d_ct/d),1.84)
+    return C_b
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_moment_plastic_plates(F_y,S_x,Z_x):
+    M_p = min(F_y * Z_x, 1.6* F_y * S_x)
+    return M_p
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_moment_elastic_plates(F_y,S_x):
+    M_y = F_y * S_x
+    return M_y
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_flexural_yielding(M_y,M_p,e):
+    M_n_yield = min(M_p,1.6*M_y)
+    V_n_yield = M_n_yield / e
+    return V_n_yield
+
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_lateral_torsional_buckling(C_b , M_p,M_y,L_u,d,t,F_y,E,S_x,e):
+    lamb_p = (L_u*d)/t**2
+    lamb_l = (0.08*E)/F_y
+    lamb_u = (1.9 * E)/F_y
+    if lamb_p <= lamb_l:M_n_LTB = inf
+    elif lamb_l < lamb_p <=lamb_u: M_n_LTB = min(C_b*(1.52 - 0.274*(lamb_p)*(F_y/E)) * M_y, M_p)
+    elif lamb_p > lamb_u :F_cr = (1.9*E*C_b)/lamb_p; M_n_LTB = min(F_cr *S_x,M_p)
+    V_n_LTB = M_n_LTB / e
+    return V_n_LTB
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_flexural_rupture(F_u,Z_x,e):
+    M_n_rupture = F_u * Z_x
+    V_n_rupture = M_n_rupture / e
+    return V_n_rupture
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_dr(d_b,d_plate,L_ev):
+    d_r = ( d_b - d_plate )/2 + L_ev
+    return d_r
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def calculation_flexural_strength(V_n_yielding,V_n_buckling,V_n_rupture,member_type):
+    if member_type == "PL": V_n = min(V_n_yielding,V_n_buckling,V_n_rupture)#PL 0
+    elif member_type == "L": V_n = min(V_n_yielding,V_n_buckling)#L 1
+    return V_n
+
+@optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+def flexural_15th(member_type, a=None, s_b=None, W=None, g_a=None, k_a=None, t=None, F_y=None, E=None,d_b=None,L_ev=0,F_u=None, N_r = None, S_r = None,d_bolt=None):
+    if member_type == "PL" or member_type == "L":
+        
+        d_plate = calculation_plate_length_bolted(N_r, S_r, L_ev)
+        d_r = calculation_dr(d_b=d_b, d_plate=d_plate, L_ev=L_ev)# this variable will be computed as it needs the properties of 2 members connected
+        L_u = calculation_unbraced_length(a=a, s_b=s_b, W=W, g_a=g_a, k_a=k_a, t=t) 
+        S_x = calculation_elastic_modulus(t, d_plate)
+        Z_x = calculation_plastic_modulus(t, d_plate)
+        Z_g_holes = calculation_plastic_modulus_holes(N_r, S_r, d_bolt,t)
+        Z_g_net = calculation_plastic_modulus_net(Z_x, Z_g_holes)
+        M_p = calculation_moment_plastic_plates(F_y, S_x, Z_x)
+        M_y = calculation_moment_elastic_plates(F_y, S_x)
+        V_n_yielding = calculation_flexural_yielding(M_y, M_p, e=L_u)
+        C_b = calculation_C_b(L_u, d_plate, d_r)
+        V_n_buckling = calculation_lateral_torsional_buckling(C_b, M_p, M_y, L_u, d_plate, t, F_y, E, S_x, e=L_u)
+        V_n_rupture = calculation_flexural_rupture(F_u, Z_g_net, e=L_u)
+        V_n = calculation_flexural_strength(V_n_yielding, V_n_buckling, V_n_rupture, member_type)
+        return V_n
+
+# @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+# def coped_beam_strength():
