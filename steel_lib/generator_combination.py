@@ -1,6 +1,5 @@
 import itertools
 import numpy as np
-from .materials import BOLT_GRADES
 
 # Efficient integer mappings for categorical data
 BOLT_GRADE_MAP = {
@@ -15,6 +14,14 @@ HOLE_TYPE_MAP = {
     1: 'OVS',  # Oversize
     2: 'SSL',  # Short slotted longitudinal
     3: 'SST'   # Short slotted transverse
+}
+
+# Bolt grade properties (F_nv and F_nt in ksi)
+BOLT_GRADE_PROPERTIES = {
+    'a325_n': {'F_nv': 54.0, 'F_nt': 90.0},  # A325-N threads not excluded
+    'a325_x': {'F_nv': 68.0, 'F_nt': 90.0},  # A325-X threads excluded
+    'a490_n': {'F_nv': 68.0, 'F_nt': 113.0}, # A490-N threads not excluded
+    'a490_x': {'F_nv': 84.0, 'F_nt': 113.0}  # A490-X threads excluded
 }
 
 def generate_combinations_dict(**kwargs):
@@ -72,9 +79,21 @@ def generate_bolt_configurations(bolt_size, bolt_grade_id, member_a_BHT_id, memb
     
     Args:
         bolt_size: Array-like of bolt sizes as integers (e.g., [16, 20, 24])
-        bolt_grade_id: Array-like of bolt grade IDs as integers (e.g., [0, 1, 2] for a325_n, a325_x, a490_n)
-        member_a_BHT_id: Array-like of member A hole type IDs (e.g., [0, 1] for STD, OVS)
-        member_b_BHT_id: Array-like of member B hole type IDs (e.g., [0, 2] for STD, SSL)
+        bolt_grade_id: Array-like of bolt grade IDs
+            0=a325_n (F_nv=54 ksi, F_nt=90 ksi)
+            1=a325_x (F_nv=68 ksi, F_nt=90 ksi)
+            2=a490_n (F_nv=68 ksi, F_nt=113 ksi)
+            3=a490_x (F_nv=84 ksi, F_nt=113 ksi)
+        member_a_BHT_id: Array-like of member A hole type IDs
+            0=STD (Standard)
+            1=OVS (Oversize)
+            2=SSL (Short slotted longitudinal)
+            3=SST (Short slotted transverse)
+        member_b_BHT_id: Array-like of member B hole type IDs
+            0=STD (Standard)
+            1=OVS (Oversize)
+            2=SSL (Short slotted longitudinal)
+            3=SST (Short slotted transverse)
         N_r: Array-like of number of bolt rows (e.g., [1, 2, 3])
         S_r: Array-like of bolt row spacing values (e.g., [60, 80, 100])
         N_c: Array-like of number of bolt columns (e.g., [1, 2, 3])
@@ -106,21 +125,20 @@ def generate_bolt_configurations(bolt_size, bolt_grade_id, member_a_BHT_id, memb
     if combinations and 'bolt_grade_id' in combinations:
         grade_ids = combinations['bolt_grade_id']
         
-        # Pre-compute strength arrays for vectorized lookup
-        grade_keys = [BOLT_GRADE_MAP[gid] for gid in np.unique(grade_ids)]
-        fnv_lookup = {gid: BOLT_GRADES[BOLT_GRADE_MAP[gid]].Fnv.value for gid in np.unique(grade_ids)}
-        fnt_lookup = {gid: BOLT_GRADES[BOLT_GRADE_MAP[gid]].Fnt.value for gid in np.unique(grade_ids)}
+        # Get bolt grade names for property lookup
+        grade_names = [BOLT_GRADE_MAP[gid] for gid in grade_ids]
         
-        # Vectorized mapping using numpy indexing
-        f_nv_values = np.array([fnv_lookup[gid] for gid in grade_ids])
-        f_nt_values = np.array([fnt_lookup[gid] for gid in grade_ids])
+        # Add strength values (using integer IDs only, no string fields)
+        combinations['F_nv'] = np.array([BOLT_GRADE_PROPERTIES[gn]['F_nv'] for gn in grade_names])
+        combinations['F_nt'] = np.array([BOLT_GRADE_PROPERTIES[gn]['F_nt'] for gn in grade_names])
         
-        # Add strength values and mapped strings
-        combinations['F_nv'] = f_nv_values
-        combinations['F_nt'] = f_nt_values
-        combinations['bolt_grade'] = np.array([BOLT_GRADE_MAP[gid] for gid in grade_ids])
-        combinations['member_a_BHT'] = np.array([HOLE_TYPE_MAP[hid] for hid in combinations['member_a_BHT_id']])
-        combinations['member_b_BHT'] = np.array([HOLE_TYPE_MAP[hid] for hid in combinations['member_b_BHT_id']])
+        # Add bolt diameter as d_bolt (same as bolt_size)
+        bolt_sizes = combinations['bolt_size']
+        combinations['d_bolt'] = bolt_sizes.copy()
+        
+        # Add hole diameters with standard 1/16" tolerance
+        combinations['d_v'] = bolt_sizes + 0.0625  # Longitudinal hole diameter
+        combinations['d_h'] = bolt_sizes + 0.0625  # Transverse hole diameter
     
     return combinations
 

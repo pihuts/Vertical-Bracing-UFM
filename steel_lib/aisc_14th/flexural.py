@@ -99,9 +99,9 @@ def calculation_flexural_strength(V_n_yielding, V_n_buckling, V_n_rupture, membe
     return V_n
 
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-def flexural_14th(l, k_a, L_eh, N_c, _S_c, t, N_r, S_r, d_b, d, F_y, F_u, e_override=None):
+def flexural_14th(l, k_a, L_eh, N_c, S_c, t, N_r, S_r, d_b, d, F_y, F_u, e_override=None):
     d = calculation_plate_length_bolted(N_r, S_r, L_eh) if d is None else d
-    e = calculation_eccentricity(l, k_a, L_eh, N_c, _S_c) if e_override is None else e_override
+    e = calculation_eccentricity(l, k_a, L_eh, N_c, S_c) if e_override is None else e_override
     S_g = calculation_elastic_modulus(t, d)
     Z_g = calculation_plastic_modulus(t, d)
     Z_hole = calculation_plastic_modulus_holes(N_r, S_r, d_b, t)

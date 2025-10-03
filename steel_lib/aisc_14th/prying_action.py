@@ -31,8 +31,8 @@ def calculation_tributary_length_prying(S_r, ga, b, L_ev):
     return p
 
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-def calculation_delta_prying(dv, p):
-    delta = 1 - dv/p
+def calculation_delta_prying(d_v, p):
+    delta = 1 - d_v/p
     return delta
 
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
@@ -58,10 +58,10 @@ def calculation_prying_action(t, F_u, N_t, p, b_prime, delta, alpha_prime, pryin
     return P_n
 
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-def prying_action(t, F_u, F_nv, F_nt, N_t, n_bolts, L, L_eh, L_ev, d_bolt, dv, S_r, ga, V_u, P_u, prying: bool, bf=None):
+def prying_action(t, F_u, F_nv, F_nt, N_t, n_bolts, L, L_eh, L_ev, d_bolt, d_v, S_r, ga, V_u, P_u, prying: bool, b_f=None):
     A_bolt = calculation_area_bolt(d_bolt)
     B = calculation_bolt_tension_modified(F_nv=F_nv, F_nt=F_nt, A_bolt=A_bolt, n_bolts=n_bolts, phi=0.9, V_u=V_u)
-    if bf:
+    if b_f:
         L = ga/2
         b = calculation_b_prying(L=L, L_eh=0, t=t)
         p = calculation_tributary_length_prying(S_r=S_r, ga=ga, b=b, L_ev=np.inf)
@@ -71,7 +71,7 @@ def prying_action(t, F_u, F_nv, F_nt, N_t, n_bolts, L, L_eh, L_ev, d_bolt, dv, S
     a = calculation_a_prying(L_eh=L_eh)
     a_prime = calculation_a_prime_prying(a=a, b=b, d_bolt=d_bolt)
     
-    delta = calculation_delta_prying(dv=dv, p=p)
+    delta = calculation_delta_prying(d_v=d_v, p=p)
     rho = calculation_rho_prying(b_prime=b_prime, a_prime=a_prime)
     beta = calculation_beta_prying(rho=rho, N_t=N_t, B=B, P_u=P_u, p=p)
     alpha_prime = calculation_alpha_prime_prying(beta=beta, delta=delta)

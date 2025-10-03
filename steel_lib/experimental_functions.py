@@ -7,57 +7,183 @@ import numpy as np
 from typing import Literal
 from math import sqrt,pi,inf
 from math import log as ln
-def optional_reporting_handcalc(config_object, *, key: str, detailed: Literal["calculation",'latex','test'] = False, **handcalc_kwargs):
+# def optional_reporting_handcalc(config_object, *, key: str, detailed: Literal["calculation",'latex','test'] = False, **handcalc_kwargs):
+#     """
+#     A single, powerful conditional decorator that combines the functionality
+#     of @handcalc and @auto_add_subtitle.
+
+#     When config.HANDCALC_ENABLED is True, it:
+#     1. Runs the decorated function through @handcalc.
+#     2. Takes the resulting LaTeX output.
+#     3. Adds the LaTeX as a subtitle to the provided config_object.
+#     4. Returns the original (latex, result) tuple from handcalc.
+
+#     When config.HANDCALC_ENABLED is False, it:
+#     1. Simply runs the original, undecorated function.
+#     2. Returns the direct result of that function (e.g., a float).
+
+#     Args:
+#         config_object: The report/LaTeX configuration object.
+#         key (str): The key to use when adding the subtitle.
+#         **handcalc_kwargs: All keyword arguments for the original @handcalc
+#                            decorator (e.g., precision=3, override='latex').
+#     """
+#     def decorator(func):
+#         @lru_cache(maxsize=1)
+#         def get_njit_func():
+#             print("--- (Compiling function with Numba for the first time) ---")
+#             return njit(func, fastmath=True)
+#         if detailed == 'latex':
+#             # --- SLOW / DETAILED PATH ---
+#             @wraps(func)
+#             def wrapper(*args, **kwargs):
+#                 # 1. Programmatically apply the @handcalc decorator
+#                 handcalc_decorated_func = handcalc(**handcalc_kwargs)(func)
+
+#                 # 2. Execute to get the (latex, result) tuple
+#                 results = handcalc_decorated_func(*args, **kwargs)
+
+#                 # 3. Add subtitle
+#                 latex_value = results[0]
+#                 config_object.add_subtitle(key=key, value=latex_value)
+
+#                 # 4. Return the original result
+#                 return results[1]
+#             return wrapper
+#         elif detailed == 'calculation':
+#             # --- FAST PATH ---
+#             compiled_func = get_njit_func()
+#             return compiled_func(*args, **kwargs)
+#         elif detailed == 'test':
+#             return handcalc(jupyter_display=True,precision=3,override='long')(func)
+#         elif detailed == 'base':
+#             # --- BASE PATH ---
+#             # Return the original function without any decorators or modifications
+#             return func
+#     return decorator
+# @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
+# def coped_beam_strength():
+from functools import wraps
+from typing import Literal, Callable, Optional, Dict, Any
+from handcalcs.decorator import handcalc
+from numba import njit
+import inspect
+
+# Global cache for compiled functions
+_NUMBA_CACHE: Dict[str, Callable] = {}
+
+def optional_reporting_handcalc(
+    *, 
+    key: str, 
+    default_detailed: Literal["calculation", 'latex', 'test', 'base'] = 'base',
+    numba_enabled: bool = True,
+    numba_kwargs: Optional[Dict[str, Any]] = None,
+    **handcalc_kwargs
+):
     """
-    A single, powerful conditional decorator that combines the functionality
-    of @handcalc and @auto_add_subtitle.
-
-    When config.HANDCALC_ENABLED is True, it:
-    1. Runs the decorated function through @handcalc.
-    2. Takes the resulting LaTeX output.
-    3. Adds the LaTeX as a subtitle to the provided config_object.
-    4. Returns the original (latex, result) tuple from handcalc.
-
-    When config.HANDCALC_ENABLED is False, it:
-    1. Simply runs the original, undecorated function.
-    2. Returns the direct result of that function (e.g., a float).
+    A powerful, dynamic decorator where the reporting mode and configuration
+    are specified when the function is called.
 
     Args:
-        config_object: The report/LaTeX configuration object.
-        key (str): The key to use when adding the subtitle.
-        **handcalc_kwargs: All keyword arguments for the original @handcalc
-                           decorator (e.g., precision=3, override='latex').
+        key (str): The key to use when adding the subtitle in latex mode.
+        default_detailed (str): The default mode if 'mode' is not specified.
+        numba_enabled (bool): Whether to enable Numba compilation for 'calculation' mode.
+        numba_kwargs (dict): Additional kwargs to pass to @njit (default: {'fastmath': True}).
+        **handcalc_kwargs: Default keyword arguments for the @handcalc decorator.
     """
+    if numba_kwargs is None:
+        numba_kwargs = {'fastmath': True}
+    
     def decorator(func):
-        if detailed == 'latex':
-            # --- SLOW / DETAILED PATH ---
-            @wraps(func)
-            def wrapper(*args, **kwargs):
-                # 1. Programmatically apply the @handcalc decorator
+        func_id = id(func)  # Use function id as unique identifier
+        
+        def _get_or_compile_numba_func():
+            """Compile and cache the Numba version of the function."""
+            if func_id not in _NUMBA_CACHE:
+                try:
+                    print(f"--- Compiling '{func.__name__}' with Numba ---")
+                    compiled = njit(**numba_kwargs)(func)
+                    _NUMBA_CACHE[func_id] = compiled
+                except Exception as e:
+                    print(f"Warning: Failed to compile '{func.__name__}' with Numba: {e}")
+                    print("Falling back to Python implementation")
+                    _NUMBA_CACHE[func_id] = func
+            return _NUMBA_CACHE[func_id]
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # Extract control parameters
+            mode = kwargs.pop('mode', default_detailed)
+            config_object = kwargs.pop('config_object', None)
+
+            # --- Mode-based execution ---
+            if mode == 'latex':
+                if config_object is None:
+                    raise ValueError(
+                        f"The 'config_object' keyword argument is required when using mode='latex' "
+                        f"in function '{func.__name__}'."
+                    )
+                
+                # Apply handcalc decorator dynamically
                 handcalc_decorated_func = handcalc(**handcalc_kwargs)(func)
+                latex_code, result = handcalc_decorated_func(*args, **kwargs)
+                config_object.add_subtitle(key=key, value=latex_code)
+                return result
 
-                # 2. Execute to get the (latex, result) tuple
-                results = handcalc_decorated_func(*args, **kwargs)
+            elif mode == 'calculation':
+                if numba_enabled:
+                    compiled_func = _get_or_compile_numba_func()
+                    return compiled_func(*args, **kwargs)
+                else:
+                    # Fall back to base implementation
+                    return func(*args, **kwargs)
 
-                # 3. Add subtitle
-                latex_value = results[0]
-                config_object.add_subtitle(key=key, value=latex_value)
+            elif mode == 'test':
+                # Use handcalc with jupyter display for testing
+                test_kwargs = {
+                    'jupyter_display': True,
+                    'precision': handcalc_kwargs.get('precision', 3),
+                    'override': handcalc_kwargs.get('override', 'long')
+                }
+                test_func = handcalc(**test_kwargs)(func)
+                return test_func(*args, **kwargs)
 
-                # 4. Return the original result
-                return results[1]
-            return wrapper
-        elif detailed == 'calculation':
-            # --- FAST PATH ---
-            # Directly return the Numba-compiled function with optimizations
-            return njit(func, fastmath=True)
-        elif detailed == 'test':
-            return handcalc(jupyter_display=True,precision=3,override='long')(func)
-        elif detailed == 'base':
-            # --- BASE PATH ---
-            # Return the original function without any decorators or modifications
-            return func
+            elif mode == 'base':
+                return func(*args, **kwargs)
+
+            else:
+                raise ValueError(
+                    f"Invalid mode '{mode}' for function '{func.__name__}'. "
+                    f"Use 'latex', 'calculation', 'test', or 'base'."
+                )
+
+        # Add utility methods to the wrapper
+        wrapper._original_func = func
+        wrapper._decorator_key = key
+        
+        # Pre-compile if in calculation mode and numba is enabled
+        if default_detailed == 'calculation' and numba_enabled:
+            # Trigger compilation on decorator application (optional)
+            pass  # Can call _get_or_compile_numba_func() here if you want eager compilation
+            
+        return wrapper
+    
     return decorator
 
+
+def clear_numba_cache():
+    """Clear the global Numba compilation cache."""
+    global _NUMBA_CACHE
+    _NUMBA_CACHE.clear()
+    print("Numba cache cleared")
+
+
+def get_cache_info():
+    """Get information about cached compiled functions."""
+    return {
+        'cached_functions': len(_NUMBA_CACHE),
+        'function_ids': list(_NUMBA_CACHE.keys())
+    }
 detailed = 'calculation'
 particle_dtype = np.dtype([
     ('id', np.int32),        # A 32-bit integer for the particle's unique ID
@@ -95,7 +221,7 @@ def calculation_theta(P_u,V_u):
 
 
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-def bolt_bearing(F_u, d_bolt, t, P_u, V_u, S_r, N_r, S_c, N_c, L_ev, L_eh, dv, dh, phi, c):
+def bolt_bearing(F_u, d_bolt, t, P_u, V_u, S_r, N_r, S_c, N_c, L_ev, L_eh, d_v, d_h, phi, c):
     """
     Calculates the bolt bearing strength for single or multiple columns of bolts.
     """
@@ -117,15 +243,15 @@ def bolt_bearing(F_u, d_bolt, t, P_u, V_u, S_r, N_r, S_c, N_c, L_ev, L_eh, dv, d
     if N_c == 1:
         # Case for a single column of bolts
         theta = calculation_theta(P_u, V_u)
-        bearing_strength = _calculate_bearing_for_direction(theta, L_eh, L_ev, S_r, dv, N_r)
+        bearing_strength = _calculate_bearing_for_direction(theta, L_eh, L_ev, S_r, d_v, N_r)
     else:
         # Case for multiple columns of bolts, check shear and axial directions separately
         
         # Strength in the direction of shear (theta = 0)
-        bearing_strength_shear = _calculate_bearing_for_direction(0, L_eh, L_ev, S_r, dv, N_r)
+        bearing_strength_shear = _calculate_bearing_for_direction(0, L_eh, L_ev, S_r, d_v, N_r)
         
         # Strength in the direction of axial load (theta = 90, but handled as 0 with swapped inputs)
-        bearing_strength_axial = _calculate_bearing_for_direction(0, L_ev, L_eh, S_c, dh, N_c)
+        bearing_strength_axial = _calculate_bearing_for_direction(0, L_ev, L_eh, S_c, d_h, N_c)
 
         # The final strength is the minimum of the two directions
         bearing_strength = min(bearing_strength_shear, bearing_strength_axial)
@@ -526,8 +652,8 @@ def calculation_tributary_length_prying(S_r,ga,b,L_ev):
     p = min(p_1, p_2,ga,S_r)
     return p
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-def calculation_delta_prying(dv,p):
-    delta = 1 - dv/p
+def calculation_delta_prying(d_v, p):
+    delta = 1 - d_v/p
     return delta
 
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
@@ -554,7 +680,7 @@ def calculation_prying_action(t, F_u, N_t, p, b_prime, delta, alpha_prime, pryin
     else: P_n = ((2*N_t*t**2*p*F_u)/(4*b_prime))*(1+delta*alpha_prime)
     return P_n
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-def prying_action(t, F_u,F_nv,F_nt, N_t,n_bolts, L, L_eh, L_ev, d_bolt, dv, S_r, ga,V_u, P_u, prying: bool,bf =None):
+def prying_action(t, F_u, F_nv, F_nt, N_t, n_bolts, L, L_eh, L_ev, d_bolt, d_v, S_r, ga, V_u, P_u, prying: bool, bf=None):
 
 
     A_bolt = calculation_area_bolt(d_bolt)
@@ -569,7 +695,7 @@ def prying_action(t, F_u,F_nv,F_nt, N_t,n_bolts, L, L_eh, L_ev, d_bolt, dv, S_r,
     a = calculation_a_prying(L_eh=L_eh)
     a_prime = calculation_a_prime_prying(a=a, b=b, d_bolt=d_bolt)
     
-    delta = calculation_delta_prying(dv=dv, p=p)
+    delta = calculation_delta_prying(d_v=d_v, p=p)
     rho = calculation_rho_prying(b_prime=b_prime, a_prime=a_prime)
     beta = calculation_beta_prying(rho=rho, N_t=N_t, B=B, P_u=P_u, p=p)
     alpha_prime = calculation_alpha_prime_prying(beta=beta, delta=delta)
@@ -647,5 +773,3 @@ def flexural_15th(member_type, a=None, s_b=None, W=None, g_a=None, k_a=None, t=N
         V_n = calculation_flexural_strength(V_n_yielding, V_n_buckling, V_n_rupture, member_type)
         return V_n
 
-# @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-# def coped_beam_strength():

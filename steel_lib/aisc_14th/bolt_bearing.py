@@ -26,7 +26,7 @@ def calculation_theta(P_u, V_u):
     return theta
 
 @optional_reporting_handcalc(config_object=None, key=None, detailed=detailed)
-def bolt_bearing(F_u, d_bolt, t, P_u, V_u, S_r, N_r, S_c, N_c, L_ev, L_eh, dv, dh, phi, c):
+def bolt_bearing(F_u, d_bolt, t, P_u, V_u, S_r, N_r, S_c, N_c, L_ev, L_eh, d_v, d_h, phi, c):
     """
     Calculates the bolt bearing strength for single or multiple columns of bolts.
     """
@@ -48,15 +48,15 @@ def bolt_bearing(F_u, d_bolt, t, P_u, V_u, S_r, N_r, S_c, N_c, L_ev, L_eh, dv, d
     if N_c == 1:
         # Case for a single column of bolts
         theta = calculation_theta(P_u, V_u)
-        bearing_strength = _calculate_bearing_for_direction(theta, L_eh, L_ev, S_r, dv, N_r)
+        bearing_strength = _calculate_bearing_for_direction(theta, L_eh, L_ev, S_r, d_v, N_r)
     else:
         # Case for multiple columns of bolts, check shear and axial directions separately
         
         # Strength in the direction of shear (theta = 0)
-        bearing_strength_shear = _calculate_bearing_for_direction(0, L_eh, L_ev, S_r, dv, N_r)
+        bearing_strength_shear = _calculate_bearing_for_direction(0, L_eh, L_ev, S_r, d_v, N_r)
         
         # Strength in the direction of axial load (theta = 90, but handled as 0 with swapped inputs)
-        bearing_strength_axial = _calculate_bearing_for_direction(0, L_ev, L_eh, S_c, dh, N_c)
+        bearing_strength_axial = _calculate_bearing_for_direction(0, L_ev, L_eh, S_c, d_h, N_c)
 
         # The final strength is the minimum of the two directions
         bearing_strength = min(bearing_strength_shear, bearing_strength_axial)

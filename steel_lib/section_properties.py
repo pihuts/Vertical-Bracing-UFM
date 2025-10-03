@@ -958,6 +958,7 @@ def filter_sections_advanced(sections_array: np.ndarray,
     # Determine which properties to return
     if properties is None:
         # Return ALL properties from W to WGo (69 properties total)
+        # Note: 't' is thickness, 'E' would be added separately as material property
         properties = ['W', 'A', 'd', 'ddet', 'Ht', 'h', 'OD', 'bf', 'bfdet', 'B', 'b', 'ID',
                      'tw', 'twdet', 'tf', 'tfdet', 't', 'tnom', 'kdes', 'kdet', 'k1', 'x', 'y',
                      'eo', 'xp', 'yp', 'Ix', 'Zx', 'Sx', 'rx', 'Iy', 'Zyy', 'Sy', 'ry', 'Iz',
@@ -965,8 +966,8 @@ def filter_sections_advanced(sections_array: np.ndarray,
                      'H', 'tan_alpha', 'Iw', 'zA', 'zB', 'zC', 'wA', 'wB', 'wC', 'SwA', 'SwB',
                      'SwC', 'SzA', 'SzB', 'SzC', 'rts', 'ho', 'PA', 'PB', 'T', 'WGi', 'WGo']
     
-    # Build results
-    results = {'indices': matching_indices}
+    # Build results with only CSV-sourced data
+    results = {'indices': matching_indices, 'count': n_matches}
     
     # Extract designations if requested (slower but often needed)
     if return_designations:
@@ -977,62 +978,23 @@ def filter_sections_advanced(sections_array: np.ndarray,
             designations.append(designation)
         results['designations'] = np.array(designations, dtype='U20')
     
-    # Add Type as numeric codes (W=0, HSS=1, etc.)
-    if 'type_code' in sections_array.dtype.names:
-        type_values = np.zeros(n_matches, dtype=np.int32)
-        for i, idx in enumerate(matching_indices):
-            type_values[i] = sections_array[idx]['type_code']
-        results['Type'] = type_values.astype(np.float32)  # Convert to float32 for consistency
-    
-    # Add other string fields as numeric if available
-    if return_designations:
-        # Add EDI_Std_Nomenclature and AISC_Manual_Label as designation strings
-        results['EDI_Std_Nomenclature'] = results['designations'].copy()
-        results['AISC_Manual_Label'] = results['designations'].copy()
-        
-        # Add T_F field (True/False as 1/0)
-        results['T_F'] = np.ones(n_matches, dtype=np.float32)  # Assuming all are True for available sections
-        
-    # Add calculated ratio properties that were in the original request
-    # Extract basic properties needed for calculations
-    bf_vals = np.zeros(n_matches, dtype=np.float32)
-    tf_vals = np.zeros(n_matches, dtype=np.float32)
-    h_vals = np.zeros(n_matches, dtype=np.float32)
-    tw_vals = np.zeros(n_matches, dtype=np.float32)
-    d_vals = np.zeros(n_matches, dtype=np.float32)
-    t_vals = np.zeros(n_matches, dtype=np.float32)
-    b_vals = np.zeros(n_matches, dtype=np.float32)
-    tdes_vals = np.zeros(n_matches, dtype=np.float32)
-    twdet_vals = np.zeros(n_matches, dtype=np.float32)
-    
-    for i, idx in enumerate(matching_indices):
-        section = sections_array[idx]
-        bf_vals[i] = section['bf'] if 'bf' in sections_array.dtype.names else 0
-        tf_vals[i] = section['tf'] if 'tf' in sections_array.dtype.names else 0
-        h_vals[i] = section['h'] if 'h' in sections_array.dtype.names else 0
-        tw_vals[i] = section['tw'] if 'tw' in sections_array.dtype.names else 0
-        d_vals[i] = section['d'] if 'd' in sections_array.dtype.names else 0
-        t_vals[i] = section['t'] if 't' in sections_array.dtype.names else 0
-        b_vals[i] = section['b'] if 'b' in sections_array.dtype.names else 0
-        # Use tnom as tdes if tdes doesn't exist
-        tdes_vals[i] = section['tnom'] if 'tnom' in sections_array.dtype.names else (section['t'] if 't' in sections_array.dtype.names else 0)
-        twdet_vals[i] = section['twdet'] if 'twdet' in sections_array.dtype.names else section['tw']
-    
-    # Calculate derived properties with safe division
-    results['twdet/2'] = twdet_vals / 2.0
-    results['bf/2tf'] = np.where(tf_vals > 0, bf_vals / (2.0 * tf_vals), 0)
-    results['b/t'] = np.where(t_vals > 0, b_vals / t_vals, 0)
-    results['b/tdes'] = np.where(tdes_vals > 0, b_vals / tdes_vals, 0)
-    results['h/tw'] = np.where(tw_vals > 0, h_vals / tw_vals, 0)
-    results['h/tdes'] = np.where(tdes_vals > 0, h_vals / tdes_vals, 0)
-    results['D/t'] = np.where(t_vals > 0, d_vals / t_vals, 0)
-    
     # Extract requested property values
     for prop in properties:
         if prop in sections_array.dtype.names:
             prop_values = np.zeros(n_matches, dtype=np.float32)
             extract_property_values(sections_array[prop], matching_indices, prop_values, n_matches)
             results[prop] = prop_values
+    
+    # Add underscore aliases for AISC standard naming (b_f, t_w, t_f)
+    if 'bf' in results:
+        results['b_f'] = results['bf']
+    if 'tw' in results:
+        results['t_w'] = results['tw']
+    if 'tf' in results:
+        results['t_f'] = results['tf']
+    
+    # Add material constant E (modulus of elasticity for steel) - 29000 ksi
+    results['E'] = np.full(n_matches, 29000.0, dtype=np.float32)
     
     return results
 
@@ -1285,14 +1247,45 @@ def create_aisc_section_selector(excel_file_path: str) -> Dict[str, Any]:
     # Load database
     sections_array, designation_lookup, type_indices = load_aisc_database(excel_file_path)
     
-    def select_by_properties(criteria=None, **kwargs):
-        """General property-based selection"""
+    def select_by_properties(criteria=None, material='A992', **kwargs):
+        """
+        General property-based selection with material properties.
+        
+        Args:
+            criteria: Dictionary of filter criteria
+            material: Steel grade (default 'A992')
+                     Supported: 'A36', 'A992', 'A572_50', 'A588', 'A500_B', 'A500_C'
+            **kwargs: Alternative way to specify criteria
+        
+        Returns:
+            Dictionary with section properties including F_y and F_u
+        """
         if criteria is not None:
             # Called with positional argument
-            return filter_sections_advanced(sections_array, designation_lookup, criteria)
+            results = filter_sections_advanced(sections_array, designation_lookup, criteria)
         else:
             # Called with keyword arguments
-            return filter_sections_advanced(sections_array, designation_lookup, kwargs)
+            results = filter_sections_advanced(sections_array, designation_lookup, kwargs)
+        
+        # Add material properties to results
+        if results:
+            material_props = {
+                'A36': {'F_y': 36.0, 'F_u': 58.0},
+                'A992': {'F_y': 50.0, 'F_u': 65.0},
+                'A572_50': {'F_y': 50.0, 'F_u': 65.0},
+                'A588': {'F_y': 50.0, 'F_u': 70.0},
+                'A500_B': {'F_y': 46.0, 'F_u': 58.0},
+                'A500_C': {'F_y': 50.0, 'F_u': 62.0},
+            }
+            
+            mat_data = material_props.get(material, material_props['A992'])
+            count = results.get('count', 0)
+            
+            # Add material properties as arrays
+            results['F_y'] = np.full(count, mat_data['F_y'], dtype=np.float32)
+            results['F_u'] = np.full(count, mat_data['F_u'], dtype=np.float32)
+        
+        return results
     
     def select_by_capacity(capacity_requirements=None, **kwargs):
         """Capacity-based selection for limit state design"""
@@ -1303,9 +1296,166 @@ def create_aisc_section_selector(excel_file_path: str) -> Dict[str, Any]:
             # Called with keyword arguments
             return filter_sections_by_capacity(sections_array, designation_lookup, **kwargs)
     
-    def get_properties(designation: str):
-        """Fast single section property lookup"""
-        return get_section_properties_fast(sections_array, designation_lookup, designation)
+    def get_properties(designation: str, material: str = 'A992'):
+        """
+        Fast single section property lookup with material properties.
+        
+        Args:
+            designation: Section designation (e.g., 'W18X35')
+            material: Steel grade (default 'A992')
+                     Supported: 'A36', 'A992', 'A572_50', 'A500_B', 'A500_C'
+        
+        Returns:
+            Dictionary with section properties + F_y and F_u
+        """
+        props = get_section_properties_fast(sections_array, designation_lookup, designation)
+        if props is not None:
+            # Add material properties
+            material_props = {
+                'A36': {'F_y': 36.0, 'F_u': 58.0},
+                'A992': {'F_y': 50.0, 'F_u': 65.0},
+                'A572_50': {'F_y': 50.0, 'F_u': 65.0},
+                'A588': {'F_y': 50.0, 'F_u': 70.0},
+                'A500_B': {'F_y': 46.0, 'F_u': 58.0},
+                'A500_C': {'F_y': 50.0, 'F_u': 62.0},
+            }
+            
+            mat_data = material_props.get(material, material_props['A992'])
+            props['F_y'] = mat_data['F_y']
+            props['F_u'] = mat_data['F_u']
+            props['material'] = material
+            props['designation'] = designation
+        
+        return props
+    
+    def get_section_with_material(designation: str, material: str = 'A992'):
+        """
+        Get section properties using select_by_properties approach.
+        More flexible than get_properties - supports filtering.
+        
+        Args:
+            designation: Section designation (e.g., 'W18X35')
+            material: Steel grade (default 'A992')
+        
+        Returns:
+            Dictionary with section properties + F_y and F_u
+        """
+        results = select_by_properties({"designation": [designation]})
+        
+        if results['count'] == 0:
+            return None
+        
+        # Extract first result (should be only one)
+        section = {name: float(results[name][0]) 
+                  for name in results.keys() 
+                  if name not in ['count', 'designations', 'types'] and hasattr(results[name], '__getitem__')}
+        
+        # Add material properties
+        material_props = {
+            'A36': {'F_y': 36.0, 'F_u': 58.0},
+            'A992': {'F_y': 50.0, 'F_u': 65.0},
+            'A572_50': {'F_y': 50.0, 'F_u': 65.0},
+            'A588': {'F_y': 50.0, 'F_u': 70.0},
+            'A500_B': {'F_y': 46.0, 'F_u': 58.0},
+            'A500_C': {'F_y': 50.0, 'F_u': 62.0},
+        }
+        
+        mat_data = material_props.get(material, material_props['A992'])
+        section['F_y'] = mat_data['F_y']
+        section['F_u'] = mat_data['F_u']
+        section['material'] = material
+        section['designation'] = designation
+        
+        return section
+    
+    def get_sections_batch(designations: list, materials: list = None):
+        """
+        Get multiple sections with multiple materials in batch.
+        Efficiently generates all combinations of sections × materials.
+        
+        Args:
+            designations: List of section designations (e.g., ['W18X35', 'W21X44'])
+            materials: List of steel grades (e.g., ['A36', 'A992'])
+                      If None, defaults to ['A992']
+        
+        Returns:
+            Dictionary with arrays for each property across all combinations:
+            - designations: All designation strings
+            - materials: All material strings
+            - F_y: Yield strengths
+            - F_u: Ultimate strengths
+            - d, tw, bf, tf, etc.: Section properties
+            - count: Total number of combinations
+            
+        Example:
+            result = get_sections_batch(['W18X35', 'W21X44'], ['A36', 'A992'])
+            # Returns 4 combinations: W18X35+A36, W18X35+A992, W21X44+A36, W21X44+A992
+        """
+        import numpy as np
+        
+        if materials is None:
+            materials = ['A992']
+        
+        # Material properties lookup
+        material_props = {
+            'A36': {'F_y': 36.0, 'F_u': 58.0},
+            'A992': {'F_y': 50.0, 'F_u': 65.0},
+            'A572_50': {'F_y': 50.0, 'F_u': 65.0},
+            'A588': {'F_y': 50.0, 'F_u': 70.0},
+            'A500_B': {'F_y': 46.0, 'F_u': 58.0},
+            'A500_C': {'F_y': 50.0, 'F_u': 62.0},
+        }
+        
+        # Get section properties for all designations at once
+        section_results = select_by_properties({"designation": designations})
+        
+        if section_results['count'] == 0:
+            return {'count': 0, 'designations': [], 'materials': []}
+        
+        n_sections = section_results['count']
+        n_materials = len(materials)
+        n_total = n_sections * n_materials
+        
+        # Initialize result arrays
+        result = {
+            'count': n_total,
+            'designations': [],
+            'materials': [],
+            'F_y': np.zeros(n_total),
+            'F_u': np.zeros(n_total),
+        }
+        
+        # Get all property names from section_results
+        prop_names = [name for name in section_results.keys() 
+                     if name not in ['count', 'designations', 'types'] 
+                     and hasattr(section_results[name], '__len__')]
+        
+        # Initialize arrays for section properties
+        for prop_name in prop_names:
+            result[prop_name] = np.zeros(n_total)
+        
+        # Fill in data for each combination
+        idx = 0
+        for i_sect in range(n_sections):
+            section_desig = section_results['designations'][i_sect]
+            
+            for material in materials:
+                # Copy section properties
+                for prop_name in prop_names:
+                    result[prop_name][idx] = section_results[prop_name][i_sect]
+                
+                # Add material properties
+                mat_data = material_props.get(material, material_props['A992'])
+                result['F_y'][idx] = mat_data['F_y']
+                result['F_u'][idx] = mat_data['F_u']
+                
+                # Add identification
+                result['designations'].append(section_desig)
+                result['materials'].append(material)
+                
+                idx += 1
+        
+        return result
     
     def find_optimal(**requirements):
         """Find optimal section for given requirements"""
@@ -1322,12 +1472,15 @@ def create_aisc_section_selector(excel_file_path: str) -> Dict[str, Any]:
         'select_by_properties': select_by_properties,
         'select_by_capacity': select_by_capacity,
         'get_properties': get_properties,
+        'get_section_with_material': get_section_with_material,  # Flexible single section
+        'get_sections_batch': get_sections_batch,  # Batch multiple sections × materials
         'find_optimal': find_optimal,
         'get_available_properties': get_available_props,
         'database_info': {
             'n_sections': len(sections_array),
             'section_types': list(SECTION_TYPES.keys()),
-            'properties_count': len(get_available_properties(sections_array))
+            'properties_count': len(get_available_properties(sections_array)),
+            'materials': ['A36', 'A992', 'A572_50', 'A588', 'A500_B', 'A500_C']
         }
     }
 
