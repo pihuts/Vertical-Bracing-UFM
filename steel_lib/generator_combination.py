@@ -72,10 +72,12 @@ def generate_combinations_dict(**kwargs):
 
 
 def generate_bolt_configurations(bolt_size, bolt_grade_id, member_a_BHT_id, member_b_BHT_id, 
-                                N_r, S_r, N_c, S_c, L_ev, L_eh, Ga):
+                                N_r, S_r, N_c, S_c, L_ev, L_eh, Ga, type_id=100):
     """
     Generates all combinations of bolt configuration parameters using integer inputs for efficiency.
     Automatically includes F_nv and F_nt strength values based on bolt grades.
+    
+    **GLOBAL NAMING SYSTEM**: Includes 'type_id' (100-199) for automatic naming in interfaces.
     
     Args:
         bolt_size: Array-like of bolt sizes as integers (e.g., [16, 20, 24])
@@ -101,10 +103,14 @@ def generate_bolt_configurations(bolt_size, bolt_grade_id, member_a_BHT_id, memb
         L_ev: Array-like of vertical edge distance values (e.g., [30, 40, 50])
         L_eh: Array-like of horizontal edge distance values (e.g., [30, 40, 50])
         Ga: Array-like of gap/gauge values (e.g., [0, 5, 10])
+        type_id: Type code for automatic naming (100-199 range):
+            100='bolts', 101='bolts_shear', 102='bolts_tension', 103='bolts_combined',
+            104='anchor_bolts', 105='hsfg_bolts'
     
     Returns:
         Dictionary with all bolt configuration combinations as columnar arrays,
-        including F_nv and F_nt values automatically derived from bolt grades
+        including F_nv and F_nt values automatically derived from bolt grades,
+        plus 'type_id' and 'type_name' for automatic interface naming
     """
     # Generate base combinations using all integers
     combinations = generate_combinations_dict(
@@ -139,6 +145,18 @@ def generate_bolt_configurations(bolt_size, bolt_grade_id, member_a_BHT_id, memb
         # Add hole diameters with standard 1/16" tolerance
         combinations['d_v'] = bolt_sizes + 0.0625  # Longitudinal hole diameter
         combinations['d_h'] = bolt_sizes + 0.0625  # Transverse hole diameter
+        
+        # Add type information for automatic naming (global naming system)
+        n_configs = len(bolt_sizes)
+        combinations['type_id'] = np.full(n_configs, type_id, dtype=np.int32)
+        
+        # Type name mapping (100-199 for bolts)
+        type_names = {
+            100: 'bolts', 101: 'bolts_shear', 102: 'bolts_tension',
+            103: 'bolts_combined', 104: 'anchor_bolts', 105: 'hsfg_bolts'
+        }
+        type_name = type_names.get(type_id, 'bolts')
+        combinations['type_name'] = np.full(n_configs, type_name, dtype='<U20')
     
     return combinations
 

@@ -11,13 +11,14 @@ Key Features:
 - Auto-extraction of all available properties
 - Single function to build complete connection chains
 - Purely functional API
+- AISC member generation with role-based selection
 
 Author: steel_lib integration
 Date: October 2025
 """
 
 import numpy as np
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Union
 from .load_transfer import (
     generate_connection_combinations,
     chain_connections,
@@ -25,12 +26,227 @@ from .load_transfer import (
     apply_eccentricity_moments
 )
 
+# ============================================================================
+# GLOBAL NAMING SYSTEM
+# ============================================================================
+# Type code ranges:
+#   001-099: Members (beams, columns, braces, etc.)
+#   100-199: Bolts
+#   200-299: Welds  
+#   300-399: Plates
+#   400-499: Other connectors
+
+# Member type codes (001-099)
+MEMBER_TYPE_MAP = {
+    1: 'beam',
+    2: 'column',
+    3: 'brace',
+    4: 'girder',
+    5: 'joist',
+    6: 'truss_chord',
+    7: 'truss_web',
+    8: 'strut',
+    9: 'tie',
+    10: 'gusset_member'
+}
+
+# Bolt type codes (100-199)
+BOLT_TYPE_MAP = {
+    100: 'bolts',
+    101: 'bolts_shear',
+    102: 'bolts_tension',
+    103: 'bolts_combined',
+    104: 'anchor_bolts',
+    105: 'hsfg_bolts'  # High strength friction grip
+}
+
+# Weld type codes (200-299)
+WELD_TYPE_MAP = {
+    200: 'weld',
+    201: 'weld_fillet',
+    202: 'weld_groove',
+    203: 'weld_plug',
+    204: 'weld_slot',
+    205: 'weld_partial_penetration'
+}
+
+# Plate type codes (300-399)
+PLATE_TYPE_MAP = {
+    300: 'plate',
+    301: 'plate_shear',
+    302: 'plate_flange',
+    303: 'plate_stiffener',
+    304: 'plate_gusset',
+    305: 'plate_base',
+    306: 'plate_doubler'
+}
+
+# Reverse mappings for lookup
+MEMBER_TYPE_TO_INT = {v: k for k, v in MEMBER_TYPE_MAP.items()}
+BOLT_TYPE_TO_INT = {v: k for k, v in BOLT_TYPE_MAP.items()}
+WELD_TYPE_TO_INT = {v: k for k, v in WELD_TYPE_MAP.items()}
+PLATE_TYPE_TO_INT = {v: k for k, v in PLATE_TYPE_MAP.items()}
+
+# Combined mapping for name extraction
+GLOBAL_TYPE_MAP = {}
+GLOBAL_TYPE_MAP.update(MEMBER_TYPE_MAP)
+GLOBAL_TYPE_MAP.update(BOLT_TYPE_MAP)
+GLOBAL_TYPE_MAP.update(WELD_TYPE_MAP)
+GLOBAL_TYPE_MAP.update(PLATE_TYPE_MAP)
+
+# Legacy support - map old role integers to new system
+ROLE_TO_MEMBER_TYPE = {
+    0: 1,  # beam
+    1: 2,  # column
+    2: 3,  # brace
+    3: 4,  # girder
+    4: 5,  # joist
+    5: 6,  # truss_chord
+    6: 7,  # truss_web
+    7: 8,  # strut
+    8: 9   # tie
+}
+
+# Global AISC database cache
+_AISC_DATABASE = None
+
+
+def extract_type_name(data: Dict[str, np.ndarray]) -> Optional[str]:
+    """
+    Extract the type name from a data dictionary using the global naming system.
+    
+    Checks for 'type_id' key and looks up the corresponding name.
+    
+    Args:
+        data: Dictionary with properties (must contain 'type_id' array)
+    
+    Returns:
+        String name (e.g., 'beam', 'bolts', 'weld_fillet', 'plate_shear') or None
+    
+    Example:
+        beams = generate_aisc_members(designations=['W14X68'], type_id=1)
+        name = extract_type_name(beams)  # Returns 'beam'
+    """
+    if 'type_id' not in data:
+        return None
+    
+    # Get first type_id value (all should be same in a config set)
+    type_id = int(data['type_id'][0]) if isinstance(data['type_id'], np.ndarray) else int(data['type_id'])
+    
+    return GLOBAL_TYPE_MAP.get(type_id, None)
+
+
+def generate_aisc_members(
+    designations: Optional[List[str]] = None,
+    filters: Optional[Dict[str, Any]] = None,
+    type_id: Union[int, str] = 1,
+    material: str = 'A992',
+    database_path: str = 'aisc-shapes-database-v16.0.xlsx'
+) -> Dict[str, np.ndarray]:
+    """
+    Generate AISC member configurations with automatic naming.
+    
+    This function works like generate_bolt_configurations and generate_shear_plates,
+    but for AISC steel members (beams, columns, braces, etc.).
+    
+    **GLOBAL NAMING SYSTEM**: Includes 'type_id' (001-099) for automatic naming in interfaces.
+    
+    Args:
+        designations: List of AISC designations (e.g., ['W14X68', 'W14X53'])
+        filters: Dictionary of property filters for selection
+        type_id: Member type as integer (001-099) or string:
+            1 or 'beam': Beam member
+            2 or 'column': Column member
+            3 or 'brace': Brace member
+            4 or 'girder': Girder member
+            5 or 'joist': Joist member
+            6 or 'truss_chord': Truss chord member
+            7 or 'truss_web': Truss web member
+            8 or 'strut': Strut member
+            9 or 'tie': Tie member
+        material: Material grade (default: 'A992')
+        database_path: Path to AISC database Excel file
+    
+    Returns:
+        Dictionary with all AISC properties as arrays, plus:
+            'type_id': Type integer ID array (001-099)
+            'type_name': Type name string array
+    
+    Example:
+        # Generate beam configurations
+        beams = generate_aisc_members(
+            designations=['W14X68', 'W14X53'],
+            type_id=1  # or type_id='beam'
+        )
+        
+        # Generate column configurations with filters
+        columns = generate_aisc_members(
+            filters={'W': {'min': 10.0, 'max': 15.0}},
+            type_id=2  # or type_id='column'
+        )
+        
+        # Use in interface creation (automatic naming!)
+        interface = create_connection_interface(
+            member_a_data=beams,     # Auto-extracts 'beam'
+            member_b_data=plates,    # Auto-extracts 'plate_shear'
+            connector_data=bolts     # Auto-extracts 'bolts'
+        )
+    """
+    global _AISC_DATABASE
+    
+    # Load AISC database (cached)
+    if _AISC_DATABASE is None:
+        try:
+            from .section_properties import create_aisc_section_selector
+            _AISC_DATABASE = create_aisc_section_selector(database_path)
+        except Exception as e:
+            raise RuntimeError(f"Failed to load AISC database from '{database_path}': {e}")
+    
+    # Convert type_id string to integer if needed
+    if isinstance(type_id, str):
+        # String name -> type_id integer
+        type_id = MEMBER_TYPE_TO_INT.get(type_id.lower(), 1)
+    
+    # Get type name from mapping
+    type_name = MEMBER_TYPE_MAP.get(type_id, 'beam')
+    
+    # Build selection criteria
+    selection_dict = {}
+    
+    if designations is not None:
+        selection_dict['designation'] = designations
+    
+    if filters is not None:
+        selection_dict.update(filters)
+    
+    # Add material filter
+    selection_dict['Type'] = [material]
+    
+    # Select from database
+    result = _AISC_DATABASE['select_by_properties'](selection_dict, material=material)
+    
+    if result['count'] == 0:
+        raise ValueError(f"No AISC members found matching criteria: {selection_dict}")
+    
+    # Add type information (global naming system)
+    result['type_id'] = np.full(result['count'], type_id, dtype=np.int32)
+    result['type_name'] = np.full(result['count'], type_name, dtype='<U20')
+    
+    # Legacy support: also include role/role_name
+    result['role'] = np.full(result['count'], type_id, dtype=np.int32)
+    result['role_name'] = np.full(result['count'], type_name, dtype='<U20')
+    
+    return result
+
 
 def create_connection_interface(
     member_a_data: Dict[str, np.ndarray],
     member_b_data: Dict[str, np.ndarray],
     connector_data: Dict[str, np.ndarray],
-    filter_fn: Optional[callable] = None
+    filter_fn: Optional[callable] = None,
+    member_a_name: Optional[str] = None,
+    member_b_name: Optional[str] = None,
+    connector_name: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Create a connection interface that bundles connection matrix with data.
@@ -38,11 +254,18 @@ def create_connection_interface(
     This generates all possible combinations of member_a × member_b × connector
     and stores everything in a dictionary for easy passing to other functions.
     
+    **AUTOMATIC NAMING**: If name parameters are None, automatically extracts
+    names from 'type_id' field using the global naming system (001-099 members,
+    100-199 bolts, 200-299 welds, 300-399 plates).
+    
     Args:
         member_a_data: Dictionary of first member properties (e.g., beams)
         member_b_data: Dictionary of second member properties (e.g., plates)
         connector_data: Dictionary of connector properties (e.g., bolts)
         filter_fn: Optional function to filter invalid combinations
+        member_a_name: Optional override name (auto-extracted if None)
+        member_b_name: Optional override name (auto-extracted if None)
+        connector_name: Optional override name (auto-extracted if None)
     
     Returns:
         Dictionary containing:
@@ -51,16 +274,24 @@ def create_connection_interface(
             'member_b_data': Second member data
             'connector_data': Connector data
             'n_connections': Total number of combinations
+            'member_a_name': Name for member_a (auto or manual)
+            'member_b_name': Name for member_b (auto or manual)
+            'connector_name': Name for connector (auto or manual)
     
     Example:
+        # Automatic naming from type_id
+        beams = generate_aisc_members(designations=['W14X68'], type_id=1)  # 'beam'
+        plates = generate_shear_plates(..., type_id=301)  # 'plate_shear'
+        bolts = generate_bolt_configurations(..., type_id=100)  # 'bolts'
+        
         interface = create_connection_interface(
             member_a_data=beams,
             member_b_data=plates,
             connector_data=bolts
+            # Names auto-extracted! No manual naming needed!
         )
         
-        # Later use in chaining
-        chain_result = build_connection_chain_from_interfaces(interface1, interface2)
+        # Properties automatically use names: 'm0_beam', 'm1_plate_shear', 'c0_bolts'
     """
     # Determine counts from first array in each dict
     member_a_count = len(next(iter(member_a_data.values())))
@@ -75,13 +306,31 @@ def create_connection_interface(
         filter_fn=filter_fn
     )
     
-    return {
+    interface = {
         'connection_matrix': connection_matrix,
         'member_a_data': member_a_data,
         'member_b_data': member_b_data,
         'connector_data': connector_data,
         'n_connections': connection_matrix['n_connections']
     }
+    
+    # Auto-extract names if not provided (uses global naming system)
+    if member_a_name is None:
+        member_a_name = extract_type_name(member_a_data)
+    if member_b_name is None:
+        member_b_name = extract_type_name(member_b_data)
+    if connector_name is None:
+        connector_name = extract_type_name(connector_data)
+    
+    # Add names to interface (may be None if type_id not present)
+    if member_a_name is not None:
+        interface['member_a_name'] = member_a_name
+    if member_b_name is not None:
+        interface['member_b_name'] = member_b_name
+    if connector_name is not None:
+        interface['connector_name'] = connector_name
+    
+    return interface
 
 
 def extract_all_properties(
@@ -242,18 +491,32 @@ def build_connection_chain_from_interfaces(
     # For chaining: member_0, connector_0, member_1, connector_1, member_2, ...
     data_order = []
     
+    # Collect custom names for members and connectors
+    member_names = []
+    connector_names = []
+    
     # Add first interface fully
     data_order.append(interfaces[0]['member_a_data'])
+    member_names.append(interfaces[0].get('member_a_name'))
+    
     data_order.append(interfaces[0]['connector_data'])
+    connector_names.append(interfaces[0].get('connector_name'))
+    
     data_order.append(interfaces[0]['member_b_data'])
+    member_names.append(interfaces[0].get('member_b_name'))
     
     # Add subsequent interfaces (skip member_a as it matches previous member_b)
     for iface in interfaces[1:]:
         data_order.append(iface['connector_data'])
+        connector_names.append(iface.get('connector_name'))
+        
         data_order.append(iface['member_b_data'])
+        member_names.append(iface.get('member_b_name'))
     
     result = {
-        'chain': chained
+        'chain': chained,
+        'member_names': member_names,      # Store for later use
+        'connector_names': connector_names  # Store for later use
     }
     
     # Build relationship tracking
@@ -264,35 +527,53 @@ def build_connection_chain_from_interfaces(
         n_members = chained['n_members']
         n_connectors = chained['n_connectors']
         
+        # Helper to create key with optional name
+        def make_member_key(idx, name=None):
+            if name:
+                return f'm{idx}_{name}'
+            return f'm{idx}'
+        
+        def make_connector_key(idx, name=None):
+            if name:
+                return f'c{idx}_{name}'
+            return f'c{idx}'
+        
         # Build adjacency information
         # Structure: member_0 → connector_0 → member_1 → connector_1 → member_2 → ...
         for i in range(n_members):
-            member_key = f'm{i}'
+            member_key = make_member_key(i, member_names[i])
             relationships[member_key] = {
                 'connected_to': [],        # Connector IDs
-                'connected_members': []     # Member IDs
+                'connected_members': [],    # Member IDs
+                'index': i,                 # Numeric index
+                'name': member_names[i]     # Custom name (if any)
             }
             
             # Check connector before this member (if exists)
             if i > 0:
-                prev_connector = f'c{i-1}'
-                prev_member = f'm{i-1}'
+                prev_connector = make_connector_key(i-1, connector_names[i-1])
+                prev_member = make_member_key(i-1, member_names[i-1])
                 relationships[member_key]['connected_to'].append(prev_connector)
                 relationships[member_key]['connected_members'].append(prev_member)
             
             # Check connector after this member (if exists)
             if i < n_connectors:
-                next_connector = f'c{i}'
-                next_member = f'm{i+1}'
+                next_connector = make_connector_key(i, connector_names[i])
+                next_member = make_member_key(i+1, member_names[i+1])
                 relationships[member_key]['connected_to'].append(next_connector)
                 relationships[member_key]['connected_members'].append(next_member)
         
         # Add connector relationships
         for i in range(n_connectors):
-            connector_key = f'c{i}'
+            connector_key = make_connector_key(i, connector_names[i])
+            m_before = make_member_key(i, member_names[i])
+            m_after = make_member_key(i+1, member_names[i+1])
+            
             relationships[connector_key] = {
-                'connects': [f'm{i}', f'm{i+1}'],  # Members this connector joins
-                'between': f'{f"m{i}"} and {f"m{i+1}"}'  # Human readable
+                'connects': [m_before, m_after],  # Members this connector joins
+                'between': f'{m_before} and {m_after}',  # Human readable
+                'index': i,                 # Numeric index
+                'name': connector_names[i]  # Custom name (if any)
             }
         
         result['relationships'] = relationships
@@ -300,9 +581,9 @@ def build_connection_chain_from_interfaces(
         # Build topology description
         topology_parts = []
         for i in range(n_members):
-            topology_parts.append(f'm{i}')
+            topology_parts.append(make_member_key(i, member_names[i]))
             if i < n_connectors:
-                topology_parts.append(f'c{i}')
+                topology_parts.append(make_connector_key(i, connector_names[i]))
         result['topology'] = ' → '.join(topology_parts)
     
     # Extract all properties if requested
@@ -310,8 +591,10 @@ def build_connection_chain_from_interfaces(
         # Get flat extracted properties (m0_tw, c0_bolt_size, etc.)
         flat_props = extract_all_properties(chained, *data_order)
         
-        # Reorganize into nested structure: {m0: {tw: array, ...}, c0: {bolt_size: array, ...}}
+        # Reorganize into nested structure using custom names if available
         organized_props = {}
+        n_members = chained['n_members']
+        n_connectors = chained['n_connectors']
         
         for flat_key, value in flat_props.items():
             # Parse key like "m0_tw" -> prefix="m0", prop_name="tw"
@@ -320,12 +603,28 @@ def build_connection_chain_from_interfaces(
             if len(parts) == 2:
                 prefix, prop_name = parts
                 
+                # Determine if it's a member or connector and build custom key
+                if prefix.startswith('m'):
+                    idx = int(prefix[1:])
+                    if idx < len(member_names) and member_names[idx]:
+                        custom_key = f'm{idx}_{member_names[idx]}'
+                    else:
+                        custom_key = prefix
+                elif prefix.startswith('c'):
+                    idx = int(prefix[1:])
+                    if idx < len(connector_names) and connector_names[idx]:
+                        custom_key = f'c{idx}_{connector_names[idx]}'
+                    else:
+                        custom_key = prefix
+                else:
+                    custom_key = prefix
+                
                 # Create nested dict if doesn't exist
-                if prefix not in organized_props:
-                    organized_props[prefix] = {}
+                if custom_key not in organized_props:
+                    organized_props[custom_key] = {}
                 
                 # Add property to the nested dict
-                organized_props[prefix][prop_name] = value
+                organized_props[custom_key][prop_name] = value
         
         result['properties'] = organized_props
     

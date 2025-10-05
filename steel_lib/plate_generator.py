@@ -154,13 +154,16 @@ def generate_shear_plates(
     t,
     w = None,
     l = None,
-    a = None
+    a = None,
+    type_id = 301
 ):
     """
     Generate shear plate configurations for simple shear connections.
     
     Shear plates are typically used in beam-to-column or beam-to-girder connections
     and are bolted to the web of the supported beam.
+    
+    **GLOBAL NAMING SYSTEM**: Includes 'type_id' (300-399) for automatic naming in interfaces.
     
     Args:
         plate_grade_id: Array-like of steel grade IDs
@@ -173,10 +176,13 @@ def generate_shear_plates(
         w: Array-like of plate widths (typically 3" to 8") (optional)
         l: Array-like of plate lengths (typically 6" to 24") (optional)
         a: Array-like of edge distances or other dimension (optional)
+        type_id: Type code for automatic naming (300-399 range):
+            300='plate', 301='plate_shear', 302='plate_flange', 303='plate_stiffener',
+            304='plate_gusset', 305='plate_base', 306='plate_doubler'
     
     Returns:
-        Dictionary with shear plate configurations including material properties
-        (integer IDs only, no string names)
+        Dictionary with shear plate configurations including material properties,
+        plus 'type_id' and 'type_name' for automatic interface naming
     """
     plate_type_id = np.array([0], dtype=np.int64)  # 0 = SHEAR type
     
@@ -199,6 +205,20 @@ def generate_shear_plates(
     # Remove string fields, keep only integer IDs
     plates.pop('plate_type', None)
     plates.pop('plate_grade', None)
+    
+    # Add type information for automatic naming (global naming system)
+    if plates and 't' in plates:
+        n_configs = len(plates['t'])
+        plates['type_id'] = np.full(n_configs, type_id, dtype=np.int32)
+        
+        # Type name mapping (300-399 for plates)
+        type_names = {
+            300: 'plate', 301: 'plate_shear', 302: 'plate_flange',
+            303: 'plate_stiffener', 304: 'plate_gusset',
+            305: 'plate_base', 306: 'plate_doubler'
+        }
+        type_name = type_names.get(type_id, 'plate_shear')
+        plates['type_name'] = np.full(n_configs, type_name, dtype='<U20')
 
     return plates
 

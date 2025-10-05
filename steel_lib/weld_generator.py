@@ -233,12 +233,15 @@ def generate_fillet_welds(
     weld_length,
     both_sides=None,
     intermittent=None,
-    intermittent_pitch=None
+    intermittent_pitch=None,
+    type_id=201
 ):
     """
     Generate fillet weld configurations.
     
     Fillet welds are the most common weld type, used in T-joints, lap joints, and corner joints.
+    
+    **GLOBAL NAMING SYSTEM**: Includes 'type_id' (200-299) for automatic naming in interfaces.
     
     Args:
         electrode_id: Array-like of electrode IDs
@@ -253,9 +256,12 @@ def generate_fillet_welds(
         both_sides: Array-like of boolean flags for double fillet welds (optional)
         intermittent: Array-like of boolean flags for intermittent welds (optional)
         intermittent_pitch: Array-like of pitch for intermittent welds in inches (optional)
+        type_id: Type code for automatic naming (200-299 range):
+            200='weld', 201='weld_fillet', 202='weld_groove', 203='weld_plug',
+            204='weld_slot', 205='weld_partial_penetration'
     
     Returns:
-        Dictionary with fillet weld configurations
+        Dictionary with fillet weld configurations plus 'type_id' and 'type_name'
     """
     weld_type_id = np.array([0], dtype=np.int64)  # 0 = FILLET type
     
@@ -290,11 +296,17 @@ def generate_fillet_welds(
     combinations['F_EXX'] = np.array([ELECTRODE_PROPERTIES[en]['F_EXX'] for en in electrode_names])
     combinations['F_w'] = np.array([ELECTRODE_PROPERTIES[en]['F_w'] for en in electrode_names])
     
-
+    # Add type information for automatic naming (global naming system)
+    n_configs = len(electrode_ids)
+    combinations['type_id'] = np.full(n_configs, type_id, dtype=np.int32)
     
-
-    
-
+    # Type name mapping (200-299 for welds)
+    type_names = {
+        200: 'weld', 201: 'weld_fillet', 202: 'weld_groove',
+        203: 'weld_plug', 204: 'weld_slot', 205: 'weld_partial_penetration'
+    }
+    type_name = type_names.get(type_id, 'weld_fillet')
+    combinations['type_name'] = np.full(n_configs, type_name, dtype='<U30')
     
     return combinations
 
