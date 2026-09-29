@@ -2,6 +2,12 @@
 
 This is a Python library for performing steel connection design calculations based on AISC specifications.
 
+## Project status and evidence
+
+Independent Python engineering library for unit-aware steel-connection and Uniform Force Method calculations. The default `Experimental` branch exposes calculation code and worked examples.
+
+This is an experimental implementation. The root `tests/` directory does not currently contain a runnable source test suite; historical test files in `build/lib/tests/` are build artifacts, not evidence of a current passing validation run. No complete independently verified AISC calculation suite is claimed. Consolidating those tests and checking reference calculations remains follow-up work.
+
 ## Installation
 
 To install this library, you can build it from the source code:
